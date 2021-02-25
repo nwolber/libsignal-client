@@ -144,14 +144,14 @@ class InMemorySenderKeyStore extends SignalClient.SenderKeyStore {
     record: SignalClient.SenderKeyRecord
   ): Promise<void> {
     const idx =
-      name.groupId() + '::' + name.senderName() + '::' + name.senderDeviceId();
+      name.id() + '::' + name.senderName() + '::' + name.senderDeviceId();
     Promise.resolve(this.state.set(idx, record));
   }
   async getSenderKey(
     name: SignalClient.SenderKeyName
   ): Promise<SignalClient.SenderKeyRecord | null> {
     const idx =
-      name.groupId() + '::' + name.senderName() + '::' + name.senderDeviceId();
+      name.id() + '::' + name.senderName() + '::' + name.senderDeviceId();
     if (this.state.has(idx)) {
       return Promise.resolve(this.state.get(idx));
     } else {
@@ -195,7 +195,7 @@ describe('SignalClient', () => {
   });
   it('SenderKeyName', () => {
     const addr = SignalClient.SenderKeyName.new('group', 'sender', 42);
-    assert.deepEqual(addr.groupId(), 'group');
+    assert.deepEqual(addr.id(), 'group');
     assert.deepEqual(addr.senderName(), 'sender');
     assert.deepEqual(addr.senderDeviceId(), 42);
   });
@@ -321,18 +321,18 @@ describe('SignalClient', () => {
     assert(!senderCert.validate(trustRoot.getPublicKey(), expiration + 10)); // expired
   });
   it('SenderKeyMessage', () => {
-    const keyId = 9;
+    const chainId = 9;
     const iteration = 101;
     const ciphertext = Buffer.alloc(32, 0xfe);
     const pk = SignalClient.PrivateKey.generate();
 
     const skm = SignalClient.SenderKeyMessage.new(
-      keyId,
+      chainId,
       iteration,
       ciphertext,
       pk
     );
-    assert.deepEqual(skm.keyId(), keyId);
+    assert.deepEqual(skm.chainId(), chainId);
     assert.deepEqual(skm.iteration(), iteration);
     assert.deepEqual(skm.ciphertext(), ciphertext);
 
@@ -344,18 +344,18 @@ describe('SignalClient', () => {
     assert.deepEqual(skm, skmFromBytes);
   });
   it('SenderKeyDistributionMessage', () => {
-    const keyId = 9;
+    const chainId = 9;
     const iteration = 101;
     const chainKey = Buffer.alloc(32, 0xfe);
     const pk = SignalClient.PrivateKey.generate();
 
     const skdm = SignalClient.SenderKeyDistributionMessage.new(
-      keyId,
+      chainId,
       iteration,
       chainKey,
       pk.getPublicKey()
     );
-    assert.deepEqual(skdm.id(), keyId);
+    assert.deepEqual(skdm.chainId(), chainId);
     assert.deepEqual(skdm.iteration(), iteration);
     assert.deepEqual(skdm.chainKey(), chainKey);
 

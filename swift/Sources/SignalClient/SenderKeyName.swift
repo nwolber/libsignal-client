@@ -14,14 +14,14 @@ public class SenderKeyName: ClonableHandleOwner {
         return signal_sender_key_name_clone(&newHandle, currentHandle)
     }
 
-    public init(groupName: String, senderName: String, deviceId: UInt32) throws {
+    public init(id: String, senderName: String, deviceId: UInt32) throws {
         var handle: OpaquePointer?
-        try checkError(signal_sender_key_name_new(&handle, groupName, senderName, deviceId))
+        try checkError(signal_sender_key_name_new(&handle, id, senderName, deviceId))
         super.init(owned: handle!)
     }
 
-    public convenience init(groupName: String, sender: ProtocolAddress) throws {
-        try self.init(groupName: groupName, senderName: sender.name, deviceId: sender.deviceId)
+    public convenience init(id: String, sender: ProtocolAddress) throws {
+        try self.init(id: id, senderName: sender.name, deviceId: sender.deviceId)
     }
 
     internal override init(owned handle: OpaquePointer) {
@@ -32,10 +32,10 @@ public class SenderKeyName: ClonableHandleOwner {
         super.init(borrowing: handle)
     }
 
-    public var groupId: String {
+    public var id: String {
         return failOnError {
             try invokeFnReturningString {
-                signal_sender_key_name_get_group_id($0, nativeHandle)
+                signal_sender_key_name_get_id($0, nativeHandle)
             }
         }
     }
@@ -67,13 +67,13 @@ extension SenderKeyName: Hashable {
             return false
         }
 
-        return lhs.groupId == rhs.groupId
+        return lhs.id == rhs.id
 
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(self.senderDeviceId)
         hasher.combine(self.senderName)
-        hasher.combine(self.groupId)
+        hasher.combine(self.id)
     }
 }
