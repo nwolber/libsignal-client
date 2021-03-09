@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Signal Messenger, LLC.
+// Copyright 2020-2021 Signal Messenger, LLC.
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
@@ -73,7 +73,8 @@ impl log::Log for FfiLogger {
             .file()
             .map(|file| CString::new(file).expect("no 0 bytes in file"));
         let message = CString::new(record.args().to_string()).unwrap_or_else(|_| {
-            CString::new(record.args().to_string().replace("\0", "\\0")).unwrap()
+            CString::new(record.args().to_string().replace("\0", "\\0"))
+                .expect("We escaped any NULLs")
         });
         (self.log)(
             target.as_ptr(),
@@ -100,6 +101,7 @@ pub unsafe extern "C" fn signal_init_logger(max_level: LogLevel, logger: FfiLogg
                 "Initializing libsignal-client version:{}",
                 env!("CARGO_PKG_VERSION")
             );
+            log_panics::init();
         }
         Err(_) => {
             log::warn!("logging already initialized for libsignal-client; ignoring later call");

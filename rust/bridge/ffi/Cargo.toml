@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2020 Signal Messenger, LLC.
+# Copyright (C) 2020-2021 Signal Messenger, LLC.
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 
@@ -17,8 +17,10 @@ crate-type = ["staticlib"]
 [dependencies]
 libsignal-protocol = { path = "../../protocol" }
 aes-gcm-siv = { path = "../../aes-gcm-siv" }
+device-transfer = { path = "../../device-transfer" }
 libsignal-bridge = { path = "../shared", features = ["ffi"] }
 async-trait = "0.1.41"
 libc = "0.2"
 rand = "0.7.3"
 log = "0.4"
+log-panics = { version = "2.0.0", features = ["with-backtrace"] }

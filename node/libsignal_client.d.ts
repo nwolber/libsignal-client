@@ -39,7 +39,7 @@ interface Wrapper<T> {
 }
 
 
-export const enum LogLevel { Error, Warn, Info, Debug, Trace }
+export const enum LogLevel { Error = 1, Warn, Info, Debug, Trace }
 export function Aes256GcmSiv_Decrypt(aesGcmSiv: Wrapper<Aes256GcmSiv>, ctext: Buffer, nonce: Buffer, associatedData: Buffer): Buffer;
 export function Aes256GcmSiv_Encrypt(aesGcmSiv: Wrapper<Aes256GcmSiv>, ptext: Buffer, nonce: Buffer, associatedData: Buffer): Buffer;
 export function Aes256GcmSiv_New(key: Buffer): Aes256GcmSiv;
@@ -93,7 +93,7 @@ export function SealedSenderDecryptionResult_GetDeviceId(obj: Wrapper<SealedSend
 export function SealedSenderDecryptionResult_GetSenderE164(obj: Wrapper<SealedSenderDecryptionResult>): string | null;
 export function SealedSenderDecryptionResult_GetSenderUuid(obj: Wrapper<SealedSenderDecryptionResult>): string;
 export function SealedSenderDecryptionResult_Message(obj: Wrapper<SealedSenderDecryptionResult>): Buffer;
-export function SealedSender_DecryptMessage(message: Buffer, trustRoot: Wrapper<PublicKey>, timestamp: number, localE164: string | null, localUuid: string, localDeviceId: number, sessionStore: SessionStore, identityStore: IdentityKeyStore, prekeyStore: PreKeyStore, signedPrekeyStore: SignedPreKeyStore): Promise<SealedSenderDecryptionResult>;
+export function SealedSender_DecryptMessage(message: Buffer, trustRoot: Wrapper<PublicKey>, timestamp: number, localE164: string | null, localUuid: string, localDeviceId: number, sessionStore: SessionStore, identityStore: IdentityKeyStore, prekeyStore: PreKeyStore, signedPrekeyStore: SignedPreKeyStore): Promise<SealedSenderDecryptionResult | null>;
 export function SealedSender_DecryptToUsmc(ctext: Buffer, identityStore: IdentityKeyStore): Promise<UnidentifiedSenderMessageContent>;
 export function SealedSender_EncryptMessage(destination: Wrapper<ProtocolAddress>, senderCert: Wrapper<SenderCertificate>, ptext: Buffer, sessionStore: SessionStore, identityStore: IdentityKeyStore): Promise<Buffer>;
 export function SenderCertificate_Deserialize(buffer: Buffer): SenderCertificate;
@@ -145,6 +145,7 @@ export function SessionRecord_ArchiveCurrentState(sessionRecord: Wrapper<Session
 export function SessionRecord_Deserialize(buffer: Buffer): SessionRecord;
 export function SessionRecord_GetLocalRegistrationId(obj: Wrapper<SessionRecord>): number;
 export function SessionRecord_GetRemoteRegistrationId(obj: Wrapper<SessionRecord>): number;
+export function SessionRecord_HasCurrentState(obj: Wrapper<SessionRecord>): boolean;
 export function SessionRecord_Serialize(obj: Wrapper<SessionRecord>): Buffer;
 export function SignalMessage_Deserialize(buffer: Buffer): SignalMessage;
 export function SignalMessage_GetBody(obj: Wrapper<SignalMessage>): Buffer;

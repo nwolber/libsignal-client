@@ -721,7 +721,7 @@ fn SessionRecord_ArchiveCurrentState(session_record: &mut SessionRecord) -> Resu
     session_record.archive_current_state()
 }
 
-bridge_get!(SessionRecord::has_current_session_state as HasCurrentState -> bool, jni = false, node = false);
+bridge_get!(SessionRecord::has_current_session_state as HasCurrentState -> bool, jni = false);
 
 bridge_deserialize!(SessionRecord::deserialize);
 bridge_get_bytearray!(SessionRecord::serialize as Serialize);
@@ -1081,8 +1081,8 @@ async fn SealedSender_DecryptMessage(
     identity_store: &mut dyn IdentityKeyStore,
     prekey_store: &mut dyn PreKeyStore,
     signed_prekey_store: &mut dyn SignedPreKeyStore,
-) -> Result<SealedSenderDecryptionResult> {
-    sealed_sender_decrypt(
+) -> Result<Option<SealedSenderDecryptionResult>> {
+    let result = sealed_sender_decrypt(
         message,
         trust_root,
         timestamp,
@@ -1095,7 +1095,13 @@ async fn SealedSender_DecryptMessage(
         signed_prekey_store,
         None,
     )
-    .await
+    .await;
+
+    match result {
+        Ok(r) => Ok(Some(r)),
+        Err(SignalProtocolError::SealedSenderSelfSend) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 #[bridge_fn(
