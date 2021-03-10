@@ -25,7 +25,7 @@ pub enum CiphertextMessage {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CiphertextMessageType {
-    Whisper = 1,
+    Whisper = 2,
     PreKey = 3,
     SenderKey = 4,
     SenderKeyDistribution = 5,
