@@ -18,6 +18,7 @@ prefix_with_name = true
 
 [export]
 include = ["SignalErrorCode", "FfiDirection", "FfiCiphertextMessageType"]
+item_types = ["enums", "functions", "opaque", "structs", "typedefs"]
 prefix = "Signal"
 renaming_overrides_prefixing = true
 
@@ -40,7 +41,7 @@ sort_by = "None"
 
 [parse]
 parse_deps = true
-include = ["libsignal-protocol", "aes-gcm-siv"]
+include = ["libsignal-protocol", "signal-crypto"]
 extra_bindings = ["libsignal-bridge"]
 
 [parse.expand]

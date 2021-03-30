@@ -12,27 +12,6 @@ pub type JavaSignedPreKeyStore<'a> = JObject<'a>;
 pub type JavaSessionStore<'a> = JObject<'a>;
 pub type JavaSenderKeyStore<'a> = JObject<'a>;
 
-fn sender_key_name_to_jobject<'a>(
-    env: &JNIEnv<'a>,
-    sender_key_name: &SenderKeyName,
-) -> Result<JObject<'a>, SignalJniError> {
-    let sender_key_name_class =
-        env.find_class("org/whispersystems/libsignal/groups/SenderKeyName")?;
-    let sender_key_name_ctor_args = [
-        JObject::from(env.new_string(sender_key_name.group_id()?)?).into(),
-        JObject::from(env.new_string(sender_key_name.sender_name()?)?).into(),
-        JValue::from(sender_key_name.sender_device_id().convert_into(env)?),
-    ];
-
-    let sender_key_name_ctor_sig = "(Ljava/lang/String;Ljava/lang/String;I)V";
-    let sender_key_name_jobject = env.new_object(
-        sender_key_name_class,
-        sender_key_name_ctor_sig,
-        &sender_key_name_ctor_args,
-    )?;
-    Ok(sender_key_name_jobject)
-}
-
 fn protocol_address_to_jobject<'a>(
     env: &'a JNIEnv,
     address: &ProtocolAddress,
@@ -43,7 +22,7 @@ fn protocol_address_to_jobject<'a>(
         JValue::from(address.device_id().convert_into(env)?),
     ];
 
-    let address_ctor_sig = "(Ljava/lang/String;I)V";
+    let address_ctor_sig = jni_signature!((java.lang.String, int) -> void);
     let address_jobject = env.new_object(address_class, address_ctor_sig, &address_ctor_args)?;
     Ok(address_jobject)
 }
@@ -66,7 +45,7 @@ impl<'a> JniIdentityKeyStore<'a> {
 
 impl<'a> JniIdentityKeyStore<'a> {
     fn do_get_identity_key_pair(&self) -> Result<IdentityKeyPair, SignalJniError> {
-        let callback_sig = "()Lorg/whispersystems/libsignal/IdentityKeyPair;";
+        let callback_sig = jni_signature!(() -> org.whispersystems.libsignal.IdentityKeyPair);
         let bits = get_object_with_serialization(
             self.env,
             self.store,
@@ -84,22 +63,15 @@ impl<'a> JniIdentityKeyStore<'a> {
     }
 
     fn do_get_local_registration_id(&self) -> Result<u32, SignalJniError> {
-        let callback_sig = "()I";
-
-        let rvalue = call_method_checked(
+        let callback_sig = jni_signature!(() -> int);
+        let i: jint = call_method_checked(
             self.env,
             self.store,
             "getLocalRegistrationId",
             callback_sig,
             &[],
         )?;
-        match rvalue {
-            JValue::Int(i) => jint_to_u32(i),
-            _ => Err(SignalJniError::UnexpectedJniResultType(
-                "getLocalRegistrationId",
-                rvalue.type_name(),
-            )),
-        }
+        jint_to_u32(i)
     }
 
     fn do_save_identity(
@@ -113,23 +85,19 @@ impl<'a> JniIdentityKeyStore<'a> {
             "org/whispersystems/libsignal/IdentityKey",
             identity.serialize().as_ref(),
         )?;
-        let callback_sig = "(Lorg/whispersystems/libsignal/SignalProtocolAddress;Lorg/whispersystems/libsignal/IdentityKey;)Z";
+        let callback_sig = jni_signature!((
+            org.whispersystems.libsignal.SignalProtocolAddress,
+            org.whispersystems.libsignal.IdentityKey
+        ) -> boolean);
         let callback_args = [address_jobject.into(), key_jobject.into()];
-        let result = call_method_checked(
+        let result: jboolean = call_method_checked(
             self.env,
             self.store,
             "saveIdentity",
             callback_sig,
             &callback_args,
         )?;
-
-        match result {
-            JValue::Bool(b) => Ok(b != 0),
-            _ => Err(SignalJniError::UnexpectedJniResultType(
-                "saveIdentity",
-                result.type_name(),
-            )),
-        }
+        Ok(result != 0)
     }
 
     fn do_is_trusted_identity(
@@ -159,9 +127,13 @@ impl<'a> JniIdentityKeyStore<'a> {
             "Lorg/whispersystems/libsignal/state/IdentityKeyStore$Direction;",
         )?;
 
-        let callback_sig = "(Lorg/whispersystems/libsignal/SignalProtocolAddress;Lorg/whispersystems/libsignal/IdentityKey;Lorg/whispersystems/libsignal/state/IdentityKeyStore$Direction;)Z";
+        let callback_sig = jni_signature!((
+            org.whispersystems.libsignal.SignalProtocolAddress,
+            org.whispersystems.libsignal.IdentityKey,
+            "Lorg/whispersystems/libsignal/state/IdentityKeyStore$Direction;",
+        ) -> boolean);
         let callback_args = [address_jobject.into(), key_jobject.into(), field_value];
-        let result = call_method_checked(
+        let result: jboolean = call_method_checked(
             self.env,
             self.store,
             "isTrustedIdentity",
@@ -169,13 +141,7 @@ impl<'a> JniIdentityKeyStore<'a> {
             &callback_args,
         )?;
 
-        match result {
-            JValue::Bool(b) => Ok(b != 0),
-            _ => Err(SignalJniError::UnexpectedJniResultType(
-                "isTrustedIdentity",
-                result.type_name(),
-            )),
-        }
+        Ok(result != 0)
     }
 
     fn do_get_identity(
@@ -183,7 +149,9 @@ impl<'a> JniIdentityKeyStore<'a> {
         address: &ProtocolAddress,
     ) -> Result<Option<IdentityKey>, SignalJniError> {
         let address_jobject = protocol_address_to_jobject(self.env, address)?;
-        let callback_sig = "(Lorg/whispersystems/libsignal/SignalProtocolAddress;)Lorg/whispersystems/libsignal/IdentityKey;";
+        let callback_sig = jni_signature!((
+            org.whispersystems.libsignal.SignalProtocolAddress
+        ) -> org.whispersystems.libsignal.IdentityKey);
         let callback_args = [address_jobject.into()];
 
         let bits = get_object_with_serialization(
@@ -260,7 +228,7 @@ impl<'a> JniPreKeyStore<'a> {
 
 impl<'a> JniPreKeyStore<'a> {
     fn do_get_pre_key(&self, prekey_id: u32) -> Result<PreKeyRecord, SignalJniError> {
-        let callback_sig = "(I)Lorg/whispersystems/libsignal/state/PreKeyRecord;";
+        let callback_sig = jni_signature!((int) -> org.whispersystems.libsignal.state.PreKeyRecord);
         let callback_args = [JValue::from(prekey_id.convert_into(self.env)?)];
         let pk = get_object_with_native_handle::<PreKeyRecord>(
             self.env,
@@ -285,12 +253,15 @@ impl<'a> JniPreKeyStore<'a> {
             "org/whispersystems/libsignal/state/PreKeyRecord",
             &record.serialize()?,
         )?;
-        let callback_sig = "(I,Lorg/whispersystems/libsignal/state/PreKeyRecord;)V";
+        let callback_sig = jni_signature!((
+            int,
+            org.whispersystems.libsignal.state.PreKeyRecord
+        ) -> void);
         let callback_args = [
             JValue::from(prekey_id.convert_into(self.env)?),
             jobject_record.into(),
         ];
-        call_method_checked(
+        let _: () = call_method_checked(
             self.env,
             self.store,
             "storePreKey",
@@ -301,9 +272,9 @@ impl<'a> JniPreKeyStore<'a> {
     }
 
     fn do_remove_pre_key(&mut self, prekey_id: u32) -> Result<(), SignalJniError> {
-        let callback_sig = "(I)V";
+        let callback_sig = jni_signature!((int) -> void);
         let callback_args = [JValue::from(prekey_id.convert_into(self.env)?)];
-        call_method_checked(
+        let _: () = call_method_checked(
             self.env,
             self.store,
             "removePreKey",
@@ -360,7 +331,9 @@ impl<'a> JniSignedPreKeyStore<'a> {
 
 impl<'a> JniSignedPreKeyStore<'a> {
     fn do_get_signed_pre_key(&self, prekey_id: u32) -> Result<SignedPreKeyRecord, SignalJniError> {
-        let callback_sig = "(I)Lorg/whispersystems/libsignal/state/SignedPreKeyRecord;";
+        let callback_sig = jni_signature!((
+            int
+        ) -> org.whispersystems.libsignal.state.SignedPreKeyRecord);
         let callback_args = [JValue::from(prekey_id.convert_into(self.env)?)];
         let spk = get_object_with_native_handle::<SignedPreKeyRecord>(
             self.env,
@@ -387,12 +360,15 @@ impl<'a> JniSignedPreKeyStore<'a> {
             "org/whispersystems/libsignal/state/SignedPreKeyRecord",
             &record.serialize()?,
         )?;
-        let callback_sig = "(I,Lorg/whispersystems/libsignal/state/SignedPreKeyRecord;)V";
+        let callback_sig = jni_signature!((
+            int,
+            org.whispersystems.libsignal.state.SignedPreKeyRecord
+        ) -> void);
         let callback_args = [
             JValue::from(prekey_id.convert_into(self.env)?),
             jobject_record.into(),
         ];
-        call_method_checked(
+        let _: () = call_method_checked(
             self.env,
             self.store,
             "storeSignedPreKey",
@@ -446,7 +422,9 @@ impl<'a> JniSessionStore<'a> {
     ) -> Result<Option<SessionRecord>, SignalJniError> {
         let address_jobject = protocol_address_to_jobject(self.env, address)?;
 
-        let callback_sig = "(Lorg/whispersystems/libsignal/SignalProtocolAddress;)Lorg/whispersystems/libsignal/state/SessionRecord;";
+        let callback_sig = jni_signature!((
+            org.whispersystems.libsignal.SignalProtocolAddress
+        ) -> org.whispersystems.libsignal.state.SessionRecord);
         let callback_args = [address_jobject.into()];
         get_object_with_native_handle::<SessionRecord>(
             self.env,
@@ -469,9 +447,12 @@ impl<'a> JniSessionStore<'a> {
             &record.serialize()?,
         )?;
 
-        let callback_sig = "(Lorg/whispersystems/libsignal/SignalProtocolAddress;Lorg/whispersystems/libsignal/state/SessionRecord;)V";
+        let callback_sig = jni_signature!((
+            org.whispersystems.libsignal.SignalProtocolAddress,
+            org.whispersystems.libsignal.state.SessionRecord,
+        ) -> void);
         let callback_args = [address_jobject.into(), session_jobject.into()];
-        call_method_checked(
+        let _: () = call_method_checked(
             self.env,
             self.store,
             "storeSession",
@@ -521,10 +502,12 @@ impl<'a> JniSenderKeyStore<'a> {
 impl<'a> JniSenderKeyStore<'a> {
     fn do_store_sender_key(
         &mut self,
-        sender_key_name: &SenderKeyName,
+        sender: &ProtocolAddress,
+        distribution_id: Uuid,
         record: &SenderKeyRecord,
     ) -> Result<(), SignalJniError> {
-        let sender_key_name_jobject = sender_key_name_to_jobject(self.env, sender_key_name)?;
+        let sender_jobject = protocol_address_to_jobject(self.env, sender)?;
+        let distribution_id_jobject = distribution_id.convert_into(self.env)?;
         let sender_key_record_jobject = jobject_from_native_handle(
             self.env,
             "org/whispersystems/libsignal/groups/state/SenderKeyRecord",
@@ -532,11 +515,16 @@ impl<'a> JniSenderKeyStore<'a> {
         )?;
 
         let callback_args = [
-            sender_key_name_jobject.into(),
+            sender_jobject.into(),
+            distribution_id_jobject.into(),
             sender_key_record_jobject.into(),
         ];
-        let callback_sig = "(Lorg/whispersystems/libsignal/groups/SenderKeyName;Lorg/whispersystems/libsignal/groups/state/SenderKeyRecord;)V";
-        call_method_checked(
+        let callback_sig = jni_signature!((
+            org.whispersystems.libsignal.SignalProtocolAddress,
+            java.util.UUID,
+            org.whispersystems.libsignal.groups.state.SenderKeyRecord,
+        ) -> void);
+        let _: () = call_method_checked(
             self.env,
             self.store,
             "storeSenderKey",
@@ -549,11 +537,16 @@ impl<'a> JniSenderKeyStore<'a> {
 
     fn do_load_sender_key(
         &mut self,
-        sender_key_name: &SenderKeyName,
+        sender: &ProtocolAddress,
+        distribution_id: Uuid,
     ) -> Result<Option<SenderKeyRecord>, SignalJniError> {
-        let sender_key_name_jobject = sender_key_name_to_jobject(self.env, sender_key_name)?;
-        let callback_args = [sender_key_name_jobject.into()];
-        let callback_sig = "(Lorg/whispersystems/libsignal/groups/SenderKeyName;)Lorg/whispersystems/libsignal/groups/state/SenderKeyRecord;";
+        let sender_jobject = protocol_address_to_jobject(self.env, sender)?;
+        let distribution_id_jobject = distribution_id.convert_into(self.env)?;
+        let callback_args = [sender_jobject.into(), distribution_id_jobject.into()];
+        let callback_sig = jni_signature!((
+            org.whispersystems.libsignal.SignalProtocolAddress,
+            java.util.UUID,
+        ) -> org.whispersystems.libsignal.groups.state.SenderKeyRecord);
 
         let skr = get_object_with_native_handle::<SenderKeyRecord>(
             self.env,
@@ -571,18 +564,20 @@ impl<'a> JniSenderKeyStore<'a> {
 impl<'a> SenderKeyStore for JniSenderKeyStore<'a> {
     async fn store_sender_key(
         &mut self,
-        sender_key_name: &SenderKeyName,
+        sender: &ProtocolAddress,
+        distribution_id: Uuid,
         record: &SenderKeyRecord,
         _ctx: Context,
     ) -> Result<(), SignalProtocolError> {
-        Ok(self.do_store_sender_key(sender_key_name, record)?)
+        Ok(self.do_store_sender_key(sender, distribution_id, record)?)
     }
 
     async fn load_sender_key(
         &mut self,
-        sender_key_name: &SenderKeyName,
+        sender: &ProtocolAddress,
+        distribution_id: Uuid,
         _ctx: Context,
     ) -> Result<Option<SenderKeyRecord>, SignalProtocolError> {
-        Ok(self.do_load_sender_key(sender_key_name)?)
+        Ok(self.do_load_sender_key(sender, distribution_id)?)
     }
 }

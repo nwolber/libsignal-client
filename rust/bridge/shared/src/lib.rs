@@ -5,6 +5,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 #![deny(clippy::unwrap_used)]
+#![feature(min_const_generics)]
 
 #[cfg(not(any(feature = "ffi", feature = "jni", feature = "node")))]
 compile_error!("Feature \"ffi\", \"jni\", or \"node\" must be enabled for this crate.");
@@ -24,7 +25,7 @@ pub mod node;
 #[macro_use]
 mod support;
 
-pub mod aes_gcm_siv;
+pub mod crypto;
 pub mod protocol;
 
 // Desktop does not make use of device transfer certificates

@@ -5,18 +5,54 @@
 
 extern crate jni_crate as jni;
 
-use jni::objects::{JObject, JThrowable, JValue};
+use jni::objects::{JThrowable, JValue};
 use jni::sys::jobject;
 
-use aes_gcm_siv::Error as AesGcmSivError;
 use device_transfer::Error as DeviceTransferError;
 use libsignal_protocol::*;
-use std::convert::TryFrom;
+use signal_crypto::Error as SignalCryptoError;
+use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 
-pub(crate) use jni::objects::{JClass, JString};
+pub(crate) use jni::objects::{JClass, JObject, JString};
 pub(crate) use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 pub(crate) use jni::JNIEnv;
+
+/// Converts a function signature to a JNI signature string.
+///
+/// This macro uses Rust function syntax `(Foo, Bar) -> Baz`, and uses Rust syntax for Java arrays
+/// `[Foo]`, but otherwise uses Java names for types: `boolean`, `byte`, `void`.
+// Placed here so that it can be used in submodules.
+// (Unlike regular Rust declarations, macros rely on lexical ordering.)
+#[macro_export]
+macro_rules! jni_signature {
+    ( boolean ) => ("Z");
+    ( bool ) => (compile_error!("use Java type 'boolean'"));
+    ( byte ) => ("B");
+    ( char ) => ("C");
+    ( short ) => ("S");
+    ( int ) => ("I");
+    ( long ) => ("J");
+    ( float ) => ("F");
+    ( double ) => ("D");
+    ( void ) => ("V");
+    ( $x:literal ) => ($x);
+
+    // Functions
+    ( ( $($arg_base:tt $(. $arg_rest:ident)*),* $(,)? ) -> $ret_base:tt $(. $ret_rest:ident)* ) => {
+        concat!("(" $(, jni_signature!($arg_base $(. $arg_rest)*))*, ")", jni_signature!($ret_base $(. $ret_rest)*))
+    };
+
+    // Arrays
+    ( [$arg_base:tt $(. $arg_rest:ident)*] ) => {
+        concat!("[", jni_signature!($arg_base $(. $arg_rest)*))
+    };
+
+    // Objects
+    ( $arg_base:tt $(. $arg_rest:ident)* ) => {
+        concat!("L", stringify!($arg_base) $(, "/", stringify!($arg_rest))*, ";")
+    };
+}
 
 #[macro_use]
 mod convert;
@@ -32,6 +68,9 @@ pub use crate::support::expect_ready;
 
 /// The type of boxed Rust values, as surfaced in JavaScript.
 pub type ObjectHandle = jlong;
+
+pub type JavaUUID<'a> = JObject<'a>;
+pub type JavaReturnUUID = jobject;
 
 /// Translates errors into Java exceptions.
 ///
@@ -76,7 +115,7 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
         SignalJniError::Signal(SignalProtocolError::FingerprintVersionMismatch(theirs, ours)) => {
             let throwable = env.new_object(
                 "org/whispersystems/libsignal/fingerprint/FingerprintVersionMismatchException",
-                "(II)V",
+                jni_signature!((int, int) -> void),
                 &[JValue::from(theirs as jint), JValue::from(ours as jint)],
             );
 
@@ -100,13 +139,15 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
 
         SignalJniError::Signal(SignalProtocolError::InvalidState(_, _))
         | SignalJniError::Signal(SignalProtocolError::NoSenderKeyState)
+        | SignalJniError::SignalCrypto(SignalCryptoError::InvalidState)
         | SignalJniError::Signal(SignalProtocolError::InvalidSessionStructure) => {
             "java/lang/IllegalStateException"
         }
 
         SignalJniError::Signal(SignalProtocolError::InvalidArgument(_))
-        | SignalJniError::AesGcmSiv(AesGcmSivError::InvalidInputSize)
-        | SignalJniError::AesGcmSiv(AesGcmSivError::InvalidNonceSize) => {
+        | SignalJniError::SignalCrypto(SignalCryptoError::UnknownAlgorithm(_, _))
+        | SignalJniError::SignalCrypto(SignalCryptoError::InvalidInputSize)
+        | SignalJniError::SignalCrypto(SignalCryptoError::InvalidNonceSize) => {
             "java/lang/IllegalArgumentException"
         }
 
@@ -134,8 +175,7 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
         }
 
         SignalJniError::Signal(SignalProtocolError::InvalidPreKeyId)
-        | SignalJniError::Signal(SignalProtocolError::InvalidSignedPreKeyId)
-        | SignalJniError::Signal(SignalProtocolError::InvalidSenderKeyId) => {
+        | SignalJniError::Signal(SignalProtocolError::InvalidSignedPreKeyId) => {
             "org/whispersystems/libsignal/InvalidKeyIdException"
         }
 
@@ -143,7 +183,7 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
         | SignalJniError::Signal(SignalProtocolError::SignatureValidationFailed)
         | SignalJniError::Signal(SignalProtocolError::BadKeyType(_))
         | SignalJniError::Signal(SignalProtocolError::BadKeyLength(_, _))
-        | SignalJniError::AesGcmSiv(AesGcmSivError::InvalidKeySize) => {
+        | SignalJniError::SignalCrypto(SignalCryptoError::InvalidKeySize) => {
             "org/whispersystems/libsignal/InvalidKeyException"
         }
 
@@ -157,7 +197,7 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
         | SignalJniError::Signal(SignalProtocolError::InvalidProtobufEncoding)
         | SignalJniError::Signal(SignalProtocolError::ProtobufDecodingError(_))
         | SignalJniError::Signal(SignalProtocolError::InvalidSealedSenderMessage(_))
-        | SignalJniError::AesGcmSiv(AesGcmSivError::InvalidTag) => {
+        | SignalJniError::SignalCrypto(SignalCryptoError::InvalidTag) => {
             "org/whispersystems/libsignal/InvalidMessageException"
         }
 
@@ -300,20 +340,25 @@ pub fn to_jbytearray<T: AsRef<[u8]>>(
 /// [`SignalProtocolError::ApplicationCallbackError`].
 ///
 /// Wraps [`JNIEnv::call_method`]; all arguments are the same.
-pub fn call_method_checked<'a>(
+/// The result must have the correct type, or [`SignalJniError::UnexpectedJniResultType`] will be
+/// returned instead.
+pub fn call_method_checked<'a, O: Into<JObject<'a>>, R: TryFrom<JValue<'a>>>(
     env: &JNIEnv<'a>,
-    obj: impl Into<JObject<'a>>,
+    obj: O,
     fn_name: &'static str,
     sig: &'static str,
     args: &[JValue<'_>],
-) -> Result<JValue<'a>, SignalJniError> {
+) -> Result<R, SignalJniError> {
     // Note that we are *not* unwrapping the result yet!
     // We need to check for exceptions *first*.
     let result = env.call_method(obj, fn_name, sig, args);
 
     let throwable = env.exception_occurred()?;
     if **throwable == *JObject::null() {
-        Ok(result?)
+        let result = result?;
+        result
+            .try_into()
+            .map_err(|_| SignalJniError::UnexpectedJniResultType(fn_name, result.type_name()))
     } else {
         env.exception_clear()?;
 
@@ -334,7 +379,7 @@ pub fn jobject_from_native_handle<'a>(
     boxed_handle: ObjectHandle,
 ) -> Result<JObject<'a>, SignalJniError> {
     let class_type = env.find_class(class_name)?;
-    let ctor_sig = "(J)V";
+    let ctor_sig = jni_signature!((long) -> void);
     let ctor_args = [JValue::from(boxed_handle)];
     Ok(env.new_object(class_type, ctor_sig, &ctor_args)?)
 }
@@ -348,7 +393,7 @@ pub fn jobject_from_serialized<'a>(
     serialized: &[u8],
 ) -> Result<JObject<'a>, SignalJniError> {
     let class_type = env.find_class(class_name)?;
-    let ctor_sig = "([B)V";
+    let ctor_sig = jni_signature!(([byte]) -> void);
     let ctor_args = [JValue::from(to_jbytearray(env, Ok(serialized))?)];
     Ok(env.new_object(class_type, ctor_sig, &ctor_args)?)
 }
@@ -383,36 +428,20 @@ pub fn get_object_with_native_handle<T: 'static + Clone>(
     callback_sig: &'static str,
     callback_fn: &'static str,
 ) -> Result<Option<T>, SignalJniError> {
-    let rvalue = call_method_checked(env, store_obj, callback_fn, callback_sig, &callback_args)?;
-
-    let obj = match rvalue {
-        JValue::Object(o) => *o,
-        _ => {
-            return Err(SignalJniError::UnexpectedJniResultType(
-                callback_fn,
-                rvalue.type_name(),
-            ))
-        }
-    };
-
+    let obj: JObject =
+        call_method_checked(env, store_obj, callback_fn, callback_sig, &callback_args)?;
     if obj.is_null() {
         return Ok(None);
     }
 
-    let handle = call_method_checked(env, obj, "nativeHandle", "()J", &[])?;
-    match handle {
-        JValue::Long(handle) => {
-            if handle == 0 {
-                return Ok(None);
-            }
-            let object = unsafe { native_handle_cast::<T>(handle)? };
-            Ok(Some(object.clone()))
-        }
-        _ => Err(SignalJniError::UnexpectedJniResultType(
-            "nativeHandle",
-            handle.type_name(),
-        )),
+    let handle: jlong =
+        call_method_checked(env, obj, "nativeHandle", jni_signature!(() -> long), &[])?;
+    if handle == 0 {
+        return Ok(None);
     }
+
+    let object = unsafe { native_handle_cast::<T>(handle)? };
+    Ok(Some(object.clone()))
 }
 
 /// Calls a method, then serializes the result.
@@ -425,31 +454,17 @@ pub fn get_object_with_serialization(
     callback_sig: &'static str,
     callback_fn: &'static str,
 ) -> Result<Option<Vec<u8>>, SignalJniError> {
-    let rvalue = call_method_checked(env, store_obj, callback_fn, callback_sig, &callback_args)?;
-
-    let obj = match rvalue {
-        JValue::Object(o) => *o,
-        _ => {
-            return Err(SignalJniError::UnexpectedJniResultType(
-                callback_fn,
-                rvalue.type_name(),
-            ))
-        }
-    };
+    let obj: JObject =
+        call_method_checked(env, store_obj, callback_fn, callback_sig, &callback_args)?;
 
     if obj.is_null() {
         return Ok(None);
     }
 
-    let bytes = call_method_checked(env, obj, "serialize", "()[B", &[])?;
+    let bytes: JObject =
+        call_method_checked(env, obj, "serialize", jni_signature!(() -> [byte]), &[])?;
 
-    match bytes {
-        JValue::Object(o) => Ok(Some(env.convert_byte_array(*o)?)),
-        _ => Err(SignalJniError::UnexpectedJniResultType(
-            "serialize",
-            bytes.type_name(),
-        )),
-    }
+    Ok(Some(env.convert_byte_array(*bytes)?))
 }
 
 /// Used by [`bridge_handle`](crate::support::bridge_handle).

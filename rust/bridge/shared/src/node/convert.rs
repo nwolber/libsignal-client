@@ -238,6 +238,14 @@ impl SimpleArgTypeInfo for String {
     }
 }
 
+impl SimpleArgTypeInfo for Uuid {
+    type ArgType = JsBuffer;
+    fn convert_from(cx: &mut FunctionContext, foreign: Handle<Self::ArgType>) -> NeonResult<Self> {
+        cx.borrow(&foreign, |buffer| Uuid::try_from(buffer.as_slice()))
+            .or_else(|_| cx.throw_type_error("UUIDs have 16 bytes"))
+    }
+}
+
 /// Converts `null` to `None`, passing through all other values.
 impl<'storage, 'context: 'storage, T> ArgTypeInfo<'storage, 'context> for Option<T>
 where
@@ -260,43 +268,25 @@ where
     }
 }
 
-/// A wrapper around `Option` that implements [`neon::prelude::Finalize`].
-///
-/// [Can be removed once we upgrade to the next Neon release.][pr]
-///
-/// [pr]: https://github.com/neon-bindings/neon/pull/680
-pub struct FinalizableOption<T: Finalize>(Option<T>);
-
-impl<T: Finalize> Finalize for FinalizableOption<T> {
-    fn finalize<'a, C: Context<'a>>(self, cx: &mut C) {
-        if let Some(value) = self.0 {
-            value.finalize(cx)
-        }
-    }
-}
-
 /// Converts `null` to `None`, passing through all other values.
 impl<'storage, T> AsyncArgTypeInfo<'storage> for Option<T>
 where
     T: AsyncArgTypeInfo<'storage>,
 {
     type ArgType = JsValue;
-    type StoredType = FinalizableOption<T::StoredType>;
+    type StoredType = Option<T::StoredType>;
     fn save_async_arg(
         cx: &mut FunctionContext,
         foreign: Handle<Self::ArgType>,
     ) -> NeonResult<Self::StoredType> {
         if foreign.downcast::<JsNull, _>(cx).is_ok() {
-            return Ok(FinalizableOption(None));
+            return Ok(None);
         }
         let non_optional_value = foreign.downcast_or_throw::<T::ArgType, _>(cx)?;
-        Ok(FinalizableOption(Some(T::save_async_arg(
-            cx,
-            non_optional_value,
-        )?)))
+        Ok(Some(T::save_async_arg(cx, non_optional_value)?))
     }
     fn load_async_arg(stored: &'storage mut Self::StoredType) -> Self {
-        stored.0.as_mut().map(T::load_async_arg)
+        stored.as_mut().map(T::load_async_arg)
     }
 }
 
@@ -456,6 +446,21 @@ impl<'a> AsyncArgTypeInfo<'a> for &'a [u8] {
     }
 }
 
+static_assertions::assert_type_eq_all!(libsignal_protocol::Context, Option<*mut std::ffi::c_void>);
+impl<'a> AsyncArgTypeInfo<'a> for *mut std::ffi::c_void {
+    type ArgType = JsNull;
+    type StoredType = ();
+    fn save_async_arg(
+        _cx: &mut FunctionContext,
+        _foreign: Handle<Self::ArgType>,
+    ) -> NeonResult<Self::StoredType> {
+        unreachable!() // only used as part of libsignal_protocol::Context
+    }
+    fn load_async_arg(_stored: &'a mut Self::StoredType) -> Self {
+        unreachable!() // only used as part of libsignal_protocol::Context
+    }
+}
+
 macro_rules! store {
     ($name:ident) => {
         paste! {
@@ -520,6 +525,17 @@ impl<'a> ResultTypeInfo<'a> for &str {
     }
 }
 
+impl<'a> ResultTypeInfo<'a> for Uuid {
+    type ResultType = JsBuffer;
+    fn convert_into(self, cx: &mut impl Context<'a>) -> JsResult<'a, Self::ResultType> {
+        let mut buffer = cx.buffer(16)?;
+        cx.borrow_mut(&mut buffer, |raw_buffer| {
+            raw_buffer.as_mut_slice().copy_from_slice(self.as_ref());
+        });
+        Ok(buffer)
+    }
+}
+
 /// Converts `None` to `null`, passing through all other values.
 impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a> for Option<T> {
     type ResultType = JsValue;
@@ -560,7 +576,7 @@ impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a>
     }
 }
 
-impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a> for Result<T, aes_gcm_siv::Error> {
+impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a> for Result<T, device_transfer::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self, cx: &mut impl Context<'a>) -> NeonResult<Handle<'a, Self::ResultType>> {
         match self {
@@ -571,7 +587,7 @@ impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a> for Result<T, aes_gcm_siv::Er
     }
 }
 
-impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a> for Result<T, device_transfer::Error> {
+impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a> for Result<T, signal_crypto::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self, cx: &mut impl Context<'a>) -> NeonResult<Handle<'a, Self::ResultType>> {
         match self {
@@ -700,7 +716,7 @@ impl<T: Send + Sync + 'static> Finalize for PersistentBoxedValue<T> {
 
 /// Implementation of [`bridge_handle`](crate::support::bridge_handle) for Node.
 macro_rules! node_bridge_handle {
-    ( $typ:ty as false ) => {};
+    ( $typ:ty as false $(, $($_:tt)*)? ) => {};
     ( $typ:ty as $node_name:ident ) => {
         impl<'storage, 'context: 'storage> node::ArgTypeInfo<'storage, 'context>
         for &'storage $typ {

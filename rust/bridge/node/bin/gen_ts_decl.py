@@ -33,6 +33,7 @@ def translate_to_ts(typ):
         "String": "string",
         "&str": "string",
         "Vec<u8>": "Buffer",
+        "Context": "null",
     }
 
     if typ in type_map:
@@ -157,7 +158,7 @@ decls = itertools.chain(
     collect_decls(os.path.join(our_abs_dir, '..')),
     collect_decls(os.path.join(our_abs_dir, '..', '..', 'shared'), features='node'))
 
-output_file_name = 'libsignal_client.d.ts'
+output_file_name = 'Native.d.ts'
 contents = open(os.path.join(our_abs_dir, output_file_name + '.in')).read()
 contents += "\n"
 contents += "\n".join(sorted(decls))

@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use jni::objects::{GlobalRef, JObject, JString, JThrowable, JValue};
+use jni::objects::{GlobalRef, JObject, JString, JThrowable};
 use jni::{JNIEnv, JavaVM};
 use std::fmt;
 
-use aes_gcm_siv::Error as AesGcmSivError;
 use device_transfer::Error as DeviceTransferError;
 use libsignal_protocol::*;
+use signal_crypto::Error as SignalCryptoError;
 
 use super::*;
 
@@ -17,8 +17,8 @@ use super::*;
 #[derive(Debug)]
 pub enum SignalJniError {
     Signal(SignalProtocolError),
-    AesGcmSiv(AesGcmSivError),
     DeviceTransfer(DeviceTransferError),
+    SignalCrypto(SignalCryptoError),
     Jni(jni::errors::Error),
     BadJniParameter(&'static str),
     UnexpectedJniResultType(&'static str, &'static str),
@@ -31,8 +31,8 @@ impl fmt::Display for SignalJniError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             SignalJniError::Signal(s) => write!(f, "{}", s),
-            SignalJniError::AesGcmSiv(s) => write!(f, "{}", s),
             SignalJniError::DeviceTransfer(s) => write!(f, "{}", s),
+            SignalJniError::SignalCrypto(s) => write!(f, "{}", s),
             SignalJniError::Jni(s) => write!(f, "JNI error {}", s),
             SignalJniError::NullHandle => write!(f, "null handle"),
             SignalJniError::BadJniParameter(m) => write!(f, "bad parameter type {}", m),
@@ -56,15 +56,15 @@ impl From<SignalProtocolError> for SignalJniError {
     }
 }
 
-impl From<AesGcmSivError> for SignalJniError {
-    fn from(e: AesGcmSivError) -> SignalJniError {
-        SignalJniError::AesGcmSiv(e)
-    }
-}
-
 impl From<DeviceTransferError> for SignalJniError {
     fn from(e: DeviceTransferError) -> SignalJniError {
         SignalJniError::DeviceTransfer(e)
+    }
+}
+
+impl From<SignalCryptoError> for SignalJniError {
+    fn from(e: SignalCryptoError) -> SignalJniError {
+        SignalJniError::SignalCrypto(e)
     }
 }
 
@@ -119,41 +119,26 @@ impl ThrownException {
 
     pub fn class_name(&self, env: &JNIEnv) -> Result<String, SignalJniError> {
         let class_type = env.get_object_class(self.exception_ref.as_obj())?;
-        let class_name = call_method_checked(
+        let class_name: JObject = call_method_checked(
             env,
             class_type,
             "getCanonicalName",
-            "()Ljava/lang/String;",
+            jni_signature!(() -> java.lang.String),
             &[],
         )?;
 
-        if let JValue::Object(class_name) = class_name {
-            let class_name: String = env.get_string(JString::from(class_name))?.into();
-            Ok(class_name)
-        } else {
-            Err(SignalJniError::UnexpectedJniResultType(
-                "getCanonicalName",
-                class_name.type_name(),
-            ))
-        }
+        Ok(env.get_string(JString::from(class_name))?.into())
     }
 
     pub fn message(&self, env: &JNIEnv) -> Result<String, SignalJniError> {
-        let message = call_method_checked(
+        let message: JObject = call_method_checked(
             env,
             self.exception_ref.as_obj(),
             "getMessage",
-            "()Ljava/lang/String;",
+            jni_signature!(() -> java.lang.String),
             &[],
         )?;
-        if let JValue::Object(message) = message {
-            Ok(env.get_string(JString::from(message))?.into())
-        } else {
-            Err(SignalJniError::UnexpectedJniResultType(
-                "getMessage",
-                message.type_name(),
-            ))
-        }
+        Ok(env.get_string(JString::from(message))?.into())
     }
 }
 

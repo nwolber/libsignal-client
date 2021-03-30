@@ -9,6 +9,7 @@ use jni::JNIEnv;
 use libsignal_protocol::*;
 use paste::paste;
 use std::borrow::Cow;
+use std::convert::TryInto;
 use std::ops::Deref;
 
 use super::*;
@@ -188,36 +189,40 @@ impl<'a> SimpleArgTypeInfo<'a> for Option<String> {
     }
 }
 
-/// A wrapper around [`jni::objects::AutoArray`] that also stores the array's length.
-pub struct AutoByteSlice<'a> {
-    jni_array: AutoArray<'a, 'a, jbyte>,
-    len: usize,
+impl<'a> SimpleArgTypeInfo<'a> for Uuid {
+    type ArgType = JObject<'a>;
+    fn convert_from(env: &JNIEnv, foreign: JObject<'a>) -> SignalJniResult<Self> {
+        check_jobject_type(env, foreign, "java/util/UUID")?;
+        let sig = jni_signature!(() -> long);
+        let msb: jlong = call_method_checked(env, foreign, "getMostSignificantBits", sig, &[])?;
+        let lsb: jlong = call_method_checked(env, foreign, "getLeastSignificantBits", sig, &[])?;
+
+        let mut bytes = [0u8; 16];
+        bytes[..8].copy_from_slice(&msb.to_be_bytes());
+        bytes[8..].copy_from_slice(&lsb.to_be_bytes());
+        Ok(bytes.into())
+    }
 }
 
 impl<'storage, 'context: 'storage> ArgTypeInfo<'storage, 'context> for &'storage [u8] {
     type ArgType = jbyteArray;
-    type StoredType = AutoByteSlice<'context>;
+    type StoredType = AutoArray<'context, 'context, jbyte>;
     fn borrow(env: &'context JNIEnv, foreign: Self::ArgType) -> SignalJniResult<Self::StoredType> {
-        let len = env.get_array_length(foreign)?;
-        assert!(len >= 0);
-        Ok(AutoByteSlice {
-            jni_array: env.get_byte_array_elements(foreign, ReleaseMode::NoCopyBack)?,
-            len: len as usize,
-        })
+        Ok(env.get_byte_array_elements(foreign, ReleaseMode::NoCopyBack)?)
     }
     fn load_from(
         _env: &JNIEnv,
         stored: &'storage mut Self::StoredType,
     ) -> SignalJniResult<&'storage [u8]> {
         Ok(unsafe {
-            std::slice::from_raw_parts(stored.jni_array.as_ptr() as *const u8, stored.len)
+            std::slice::from_raw_parts(stored.as_ptr() as *const u8, stored.size()? as usize)
         })
     }
 }
 
 impl<'storage, 'context: 'storage> ArgTypeInfo<'storage, 'context> for Option<&'storage [u8]> {
     type ArgType = jbyteArray;
-    type StoredType = Option<AutoByteSlice<'context>>;
+    type StoredType = Option<AutoArray<'context, 'context, jbyte>>;
     fn borrow(env: &'context JNIEnv, foreign: Self::ArgType) -> SignalJniResult<Self::StoredType> {
         if foreign.is_null() {
             Ok(None)
@@ -233,6 +238,22 @@ impl<'storage, 'context: 'storage> ArgTypeInfo<'storage, 'context> for Option<&'
             .as_mut()
             .map(|s| <&'storage [u8]>::load_from(env, s))
             .transpose()
+    }
+}
+
+impl<'storage, 'context: 'storage> ArgTypeInfo<'storage, 'context> for &'storage mut [u8] {
+    type ArgType = jbyteArray;
+    type StoredType = AutoArray<'context, 'context, jbyte>;
+    fn borrow(env: &'context JNIEnv, foreign: Self::ArgType) -> SignalJniResult<Self::StoredType> {
+        Ok(env.get_byte_array_elements(foreign, ReleaseMode::CopyBack)?)
+    }
+    fn load_from(
+        _env: &JNIEnv,
+        stored: &'storage mut Self::StoredType,
+    ) -> SignalJniResult<&'storage mut [u8]> {
+        Ok(unsafe {
+            std::slice::from_raw_parts_mut(stored.as_ptr() as *mut u8, stored.size()? as usize)
+        })
     }
 }
 
@@ -259,6 +280,19 @@ macro_rules! store {
             }
         }
     };
+}
+
+impl<'a> SimpleArgTypeInfo<'a> for Context {
+    type ArgType = JObject<'a>;
+    fn convert_from(_env: &JNIEnv, foreign: JObject<'a>) -> SignalJniResult<Self> {
+        if foreign.is_null() {
+            Ok(None)
+        } else {
+            Err(SignalJniError::BadJniParameter(
+                "<context> (only 'null' contexts are supported)",
+            ))
+        }
+    }
 }
 
 store!(IdentityKeyStore);
@@ -346,6 +380,24 @@ impl ResultTypeInfo for Option<&str> {
     }
 }
 
+impl ResultTypeInfo for Uuid {
+    type ResultType = jobject;
+    fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
+        let uuid_class = env.find_class("java/util/UUID")?;
+        let uuid_bytes: [u8; 16] = self.into();
+        let ctor_args = [
+            JValue::from(jlong::from_be_bytes(
+                uuid_bytes[..8].try_into().expect("correct length"),
+            )),
+            JValue::from(jlong::from_be_bytes(
+                uuid_bytes[8..].try_into().expect("correct length"),
+            )),
+        ];
+
+        Ok(*env.new_object(uuid_class, "(JJ)V", &ctor_args)?)
+    }
+}
+
 impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, SignalProtocolError> {
     type ResultType = T::ResultType;
     fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
@@ -353,14 +405,14 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, SignalProtocolError> {
     }
 }
 
-impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, aes_gcm_siv::Error> {
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, device_transfer::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
         T::convert_into(self?, env)
     }
 }
 
-impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, device_transfer::Error> {
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, signal_crypto::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
         T::convert_into(self?, env)
@@ -400,7 +452,7 @@ impl crate::support::Env for &'_ JNIEnv<'_> {
 
 /// Implementation of [`bridge_handle`](crate::support::bridge_handle) for JNI.
 macro_rules! jni_bridge_handle {
-    ( $typ:ty as false ) => {};
+    ( $typ:ty as false $(, $($_:tt)*)? ) => {};
     ( $typ:ty as $jni_name:ident ) => {
         impl<'a> jni::SimpleArgTypeInfo<'a> for &$typ {
             type ArgType = jni::ObjectHandle;
@@ -511,6 +563,15 @@ macro_rules! jni_arg_type {
     (Option<&[u8]>) => {
         jni::jbyteArray
     };
+    (&mut [u8]) => {
+        jni::jbyteArray
+    };
+    (Context) => {
+        jni::JObject
+    };
+    (Uuid) => {
+        jni::JavaUUID
+    };
     (&mut dyn $typ:ty) => {
         paste!(jni::[<Java $typ>])
     };
@@ -578,6 +639,9 @@ macro_rules! jni_result_type {
     };
     (Option<&str>) => {
         jni::jstring
+    };
+    (Uuid) => {
+        jni::JavaReturnUUID
     };
     (Vec<u8>) => {
         jni::jbyteArray

@@ -61,11 +61,12 @@ java_decl = re.compile(r'([a-zA-Z]+) Java_org_signal_client_internal_Native_([A-
 
 
 def translate_to_java(typ):
-    # jobject is not given here; instead use a type
+    # jobject as a return type is not given here; instead use a type
     type_map = {
         "void": "void",
         "jstring": "String",
         "JString": "String",
+        "JObject": "Object",
         "JClass": "Class",
         "jbyteArray": "byte[]",
         "jlongArray": "long[]",
@@ -78,7 +79,9 @@ def translate_to_java(typ):
     if typ in type_map:
         return type_map[typ]
 
-    # Assume anything prefixed with Java refers to an object
+    # Assume anything prefixed with "Java" refers to an object
+    if typ.startswith('JavaReturn'):
+        return typ[10:]
     if typ.startswith('Java'):
         return typ[4:]
 
