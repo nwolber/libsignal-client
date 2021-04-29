@@ -1,10 +1,10 @@
 //
-// Copyright 2020 Signal Messenger, LLC.
+// Copyright 2020-2021 Signal Messenger, LLC.
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
 use crate::proto;
-use crate::{IdentityKey, PrivateKey, PublicKey, Result, SignalProtocolError, Uuid};
+use crate::{IdentityKey, PrivateKey, PublicKey, Result, SignalProtocolError};
 
 use std::convert::TryFrom;
 
@@ -13,6 +13,7 @@ use prost::Message;
 use rand::{CryptoRng, Rng};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
+use uuid::Uuid;
 
 pub const CIPHERTEXT_MESSAGE_CURRENT_VERSION: u8 = 3;
 
@@ -20,15 +21,15 @@ pub enum CiphertextMessage {
     SignalMessage(SignalMessage),
     PreKeySignalMessage(PreKeySignalMessage),
     SenderKeyMessage(SenderKeyMessage),
-    SenderKeyDistributionMessage(SenderKeyDistributionMessage),
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, num_enum::TryFromPrimitive)]
+#[repr(u8)]
 pub enum CiphertextMessageType {
     Whisper = 2,
     PreKey = 3,
-    SenderKey = 4,
-    SenderKeyDistribution = 5,
+    // Further cases should line up with Envelope.Type (proto), even though old cases don't.
+    SenderKey = 7,
 }
 
 impl CiphertextMessage {
@@ -37,9 +38,6 @@ impl CiphertextMessage {
             CiphertextMessage::SignalMessage(_) => CiphertextMessageType::Whisper,
             CiphertextMessage::PreKeySignalMessage(_) => CiphertextMessageType::PreKey,
             CiphertextMessage::SenderKeyMessage(_) => CiphertextMessageType::SenderKey,
-            CiphertextMessage::SenderKeyDistributionMessage(_) => {
-                CiphertextMessageType::SenderKeyDistribution
-            }
         }
     }
 
@@ -48,7 +46,6 @@ impl CiphertextMessage {
             CiphertextMessage::SignalMessage(x) => x.serialized(),
             CiphertextMessage::PreKeySignalMessage(x) => x.serialized(),
             CiphertextMessage::SenderKeyMessage(x) => x.serialized(),
-            CiphertextMessage::SenderKeyDistributionMessage(x) => x.serialized(),
         }
     }
 }
@@ -193,15 +190,14 @@ impl TryFrom<&[u8]> for SignalMessage {
             return Err(SignalProtocolError::CiphertextMessageTooShort(value.len()));
         }
         let message_version = value[0] >> 4;
-        let ciphertext_version = value[0] & 0x0F;
-        if ciphertext_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
             return Err(SignalProtocolError::LegacyCiphertextVersion(
-                ciphertext_version,
+                message_version,
             ));
         }
-        if ciphertext_version > CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version > CIPHERTEXT_MESSAGE_CURRENT_VERSION {
             return Err(SignalProtocolError::UnrecognizedCiphertextVersion(
-                ciphertext_version,
+                message_version,
             ));
         }
 
@@ -333,15 +329,14 @@ impl TryFrom<&[u8]> for PreKeySignalMessage {
         }
 
         let message_version = value[0] >> 4;
-        let ciphertext_version = value[0] & 0x0F;
-        if ciphertext_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
             return Err(SignalProtocolError::LegacyCiphertextVersion(
-                ciphertext_version,
+                message_version,
             ));
         }
-        if ciphertext_version > CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version > CIPHERTEXT_MESSAGE_CURRENT_VERSION {
             return Err(SignalProtocolError::UnrecognizedCiphertextVersion(
-                ciphertext_version,
+                message_version,
             ));
         }
 
@@ -397,7 +392,7 @@ impl SenderKeyMessage {
         signature_key: &PrivateKey,
     ) -> Result<Self> {
         let proto_message = proto::wire::SenderKeyMessage {
-            distribution_uuid: Some(distribution_id.into()),
+            distribution_uuid: Some(distribution_id.as_bytes().to_vec()),
             chain_id: Some(chain_id),
             iteration: Some(iteration),
             ciphertext: Some(ciphertext.to_vec()),
@@ -474,15 +469,14 @@ impl TryFrom<&[u8]> for SenderKeyMessage {
             return Err(SignalProtocolError::CiphertextMessageTooShort(value.len()));
         }
         let message_version = value[0] >> 4;
-        let ciphertext_version = value[0] & 0x0F;
-        if ciphertext_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
             return Err(SignalProtocolError::LegacyCiphertextVersion(
-                ciphertext_version,
+                message_version,
             ));
         }
-        if ciphertext_version > CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version > CIPHERTEXT_MESSAGE_CURRENT_VERSION {
             return Err(SignalProtocolError::UnrecognizedCiphertextVersion(
-                ciphertext_version,
+                message_version,
             ));
         }
         let proto_structure =
@@ -490,7 +484,7 @@ impl TryFrom<&[u8]> for SenderKeyMessage {
 
         let distribution_id = proto_structure
             .distribution_uuid
-            .and_then(|bytes| Uuid::try_from(bytes.as_slice()).ok())
+            .and_then(|bytes| Uuid::from_slice(bytes.as_slice()).ok())
             .ok_or(SignalProtocolError::InvalidProtobufEncoding)?;
         let chain_id = proto_structure
             .chain_id
@@ -534,7 +528,7 @@ impl SenderKeyDistributionMessage {
         signing_key: PublicKey,
     ) -> Result<Self> {
         let proto_message = proto::wire::SenderKeyDistributionMessage {
-            distribution_uuid: Some(distribution_id.into()),
+            distribution_uuid: Some(distribution_id.as_bytes().to_vec()),
             chain_id: Some(chain_id),
             iteration: Some(iteration),
             chain_key: Some(chain_key.clone()),
@@ -624,7 +618,7 @@ impl TryFrom<&[u8]> for SenderKeyDistributionMessage {
 
         let distribution_id = proto_structure
             .distribution_uuid
-            .and_then(|bytes| Uuid::try_from(bytes.as_slice()).ok())
+            .and_then(|bytes| Uuid::from_slice(bytes.as_slice()).ok())
             .ok_or(SignalProtocolError::InvalidProtobufEncoding)?;
         let chain_id = proto_structure
             .chain_id
@@ -770,7 +764,7 @@ mod tests {
         let mut csprng = OsRng;
         let signature_key_pair = KeyPair::generate(&mut csprng);
         let sender_key_message = SenderKeyMessage::new(
-            Uuid::from(0xd1d1d1d1_7000_11eb_b32a_33b8a8a487a6),
+            Uuid::from_u128(0xd1d1d1d1_7000_11eb_b32a_33b8a8a487a6),
             42,
             7,
             [1u8, 2, 3].into(),
