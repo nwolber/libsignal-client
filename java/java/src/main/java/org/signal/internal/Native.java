@@ -101,6 +101,15 @@ public final class Native {
   public static native void CryptographicMac_Update(long mac, byte[] input);
   public static native void CryptographicMac_UpdateWithOffset(long mac, byte[] input, int offset, int len);
 
+  public static native long DecryptionErrorMessage_Deserialize(byte[] data);
+  public static native void DecryptionErrorMessage_Destroy(long handle);
+  public static native long DecryptionErrorMessage_ExtractFromSerializedContent(byte[] bytes);
+  public static native long DecryptionErrorMessage_ForOriginalMessage(byte[] originalBytes, int originalType, long originalTimestamp, int originalSenderDeviceId);
+  public static native int DecryptionErrorMessage_GetDeviceId(long obj);
+  public static native long DecryptionErrorMessage_GetRatchetKey(long m);
+  public static native byte[] DecryptionErrorMessage_GetSerialized(long obj);
+  public static native long DecryptionErrorMessage_GetTimestamp(long obj);
+
   public static native byte[] DeviceTransfer_GenerateCertificate(byte[] privateKey, String name, int daysToExpire);
   public static native byte[] DeviceTransfer_GeneratePrivateKey();
 
@@ -137,6 +146,13 @@ public final class Native {
   public static native String NumericFingerprintGenerator_GetDisplayString(long obj);
   public static native byte[] NumericFingerprintGenerator_GetScannableEncoding(long obj);
   public static native long NumericFingerprintGenerator_New(int iterations, int version, byte[] localIdentifier, byte[] localKey, byte[] remoteIdentifier, byte[] remoteKey);
+
+  public static native long PlaintextContent_Deserialize(byte[] data);
+  public static native byte[] PlaintextContent_DeserializeAndGetContent(byte[] bytes);
+  public static native void PlaintextContent_Destroy(long handle);
+  public static native long PlaintextContent_FromDecryptionErrorMessage(long m);
+  public static native byte[] PlaintextContent_GetBody(long obj);
+  public static native byte[] PlaintextContent_GetSerialized(long obj);
 
   public static native void PreKeyBundle_Destroy(long handle);
   public static native int PreKeyBundle_GetDeviceId(long obj);
@@ -178,7 +194,7 @@ public final class Native {
 
   public static native long SealedSessionCipher_DecryptToUsmc(byte[] ctext, IdentityKeyStore identityStore, Object ctx);
   public static native byte[] SealedSessionCipher_Encrypt(long destination, long content, IdentityKeyStore identityKeyStore, Object ctx);
-  public static native byte[] SealedSessionCipher_MultiRecipientEncrypt(long[] recipients, long content, IdentityKeyStore identityKeyStore, Object ctx);
+  public static native byte[] SealedSessionCipher_MultiRecipientEncrypt(long[] recipients, long[] recipientSessions, long content, IdentityKeyStore identityKeyStore, Object ctx);
   public static native byte[] SealedSessionCipher_MultiRecipientMessageForSingleRecipient(byte[] encodedMultiRecipientMessage);
 
   public static native long SenderCertificate_Deserialize(byte[] data);
@@ -203,7 +219,7 @@ public final class Native {
   public static native int SenderKeyDistributionMessage_GetIteration(long obj);
   public static native byte[] SenderKeyDistributionMessage_GetSerialized(long obj);
   public static native byte[] SenderKeyDistributionMessage_GetSignatureKey(long m);
-  public static native long SenderKeyDistributionMessage_New(UUID distributionId, int chainId, int iteration, byte[] chainkey, long pk);
+  public static native long SenderKeyDistributionMessage_New(int messageVersion, UUID distributionId, int chainId, int iteration, byte[] chainkey, long pk);
 
   public static native long SenderKeyMessage_Deserialize(byte[] data);
   public static native void SenderKeyMessage_Destroy(long handle);
@@ -212,7 +228,7 @@ public final class Native {
   public static native UUID SenderKeyMessage_GetDistributionId(long obj);
   public static native int SenderKeyMessage_GetIteration(long obj);
   public static native byte[] SenderKeyMessage_GetSerialized(long obj);
-  public static native long SenderKeyMessage_New(UUID distributionId, int chainId, int iteration, byte[] ciphertext, long pk);
+  public static native long SenderKeyMessage_New(int messageVersion, UUID distributionId, int chainId, int iteration, byte[] ciphertext, long pk);
   public static native boolean SenderKeyMessage_VerifySignature(long skm, long pubkey);
 
   public static native long SenderKeyRecord_Deserialize(byte[] data);
@@ -236,6 +252,7 @@ public final class Native {
   public static native CiphertextMessage SessionCipher_EncryptMessage(byte[] ptext, long protocolAddress, SessionStore sessionStore, IdentityKeyStore identityKeyStore, Object ctx);
 
   public static native void SessionRecord_ArchiveCurrentState(long sessionRecord);
+  public static native boolean SessionRecord_CurrentRatchetKeyMatches(long s, long key);
   public static native long SessionRecord_Deserialize(byte[] data);
   public static native void SessionRecord_Destroy(long handle);
   public static native long SessionRecord_FromSingleSessionState(byte[] sessionState);

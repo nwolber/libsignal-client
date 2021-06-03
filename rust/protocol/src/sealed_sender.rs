@@ -5,8 +5,8 @@
 
 use crate::{
     message_encrypt, CiphertextMessageType, Context, Direction, IdentityKeyStore, KeyPair,
-    PreKeySignalMessage, PreKeyStore, PrivateKey, ProtocolAddress, PublicKey, Result, SessionStore,
-    SignalMessage, SignalProtocolError, SignedPreKeyStore, HKDF,
+    PreKeySignalMessage, PreKeyStore, PrivateKey, ProtocolAddress, PublicKey, Result,
+    SessionRecord, SessionStore, SignalMessage, SignalProtocolError, SignedPreKeyStore, HKDF,
 };
 
 use crate::crypto;
@@ -335,6 +335,7 @@ impl From<ProtoMessageType> for CiphertextMessageType {
             ProtoMessageType::Message => Self::Whisper,
             ProtoMessageType::PrekeyMessage => Self::PreKey,
             ProtoMessageType::SenderkeyMessage => Self::SenderKey,
+            ProtoMessageType::PlaintextContent => Self::Plaintext,
         };
         // Keep raw values in sync from now on, for efficient codegen.
         assert!(result == Self::PreKey || message_type as i32 == result as i32);
@@ -348,6 +349,7 @@ impl From<CiphertextMessageType> for ProtoMessageType {
             CiphertextMessageType::PreKey => Self::PrekeyMessage,
             CiphertextMessageType::Whisper => Self::Message,
             CiphertextMessageType::SenderKey => Self::SenderkeyMessage,
+            CiphertextMessageType::Plaintext => Self::PlaintextContent,
         };
         // Keep raw values in sync from now on, for efficient codegen.
         assert!(result == Self::PrekeyMessage || message_type as i32 == result as i32);
@@ -358,8 +360,8 @@ impl From<CiphertextMessageType> for ProtoMessageType {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ContentHint {
     Default,
-    Supplementary,
-    Retry,
+    Resendable,
+    Implicit,
     Unknown(u32),
 }
 
@@ -376,8 +378,8 @@ impl ContentHint {
         use proto::sealed_sender::unidentified_sender_message::message::ContentHint as ProtoContentHint;
         match self {
             ContentHint::Default => 0,
-            ContentHint::Supplementary => ProtoContentHint::Supplementary as u32,
-            ContentHint::Retry => ProtoContentHint::Retry as u32,
+            ContentHint::Resendable => ProtoContentHint::Resendable as u32,
+            ContentHint::Implicit => ProtoContentHint::Implicit as u32,
             ContentHint::Unknown(value) => value,
         }
     }
@@ -390,8 +392,8 @@ impl From<u32> for ContentHint {
         match ProtoContentHint::from_i32(raw_value as i32) {
             None if raw_value == 0 => ContentHint::Default,
             None => ContentHint::Unknown(raw_value),
-            Some(ProtoContentHint::Supplementary) => ContentHint::Supplementary,
-            Some(ProtoContentHint::Retry) => ContentHint::Retry,
+            Some(ProtoContentHint::Resendable) => ContentHint::Resendable,
+            Some(ProtoContentHint::Implicit) => ContentHint::Implicit,
         }
     }
 }
@@ -870,11 +872,18 @@ mod sealed_sender_v2 {
 
 pub async fn sealed_sender_multi_recipient_encrypt<R: Rng + CryptoRng>(
     destinations: &[&ProtocolAddress],
+    destination_sessions: &[&SessionRecord],
     usmc: &UnidentifiedSenderMessageContent,
     identity_store: &mut dyn IdentityKeyStore,
     ctx: Context,
     rng: &mut R,
 ) -> Result<Vec<u8>> {
+    if destinations.len() != destination_sessions.len() {
+        return Err(SignalProtocolError::InvalidArgument(
+            "must have the same number of destination sessions as addresses".to_string(),
+        ));
+    }
+
     let m: [u8; 32] = rng.gen();
     let keys = sealed_sender_v2::DerivedKeys::calculate(&m);
     let e_pub = keys.e.public_key()?;
@@ -895,7 +904,7 @@ pub async fn sealed_sender_multi_recipient_encrypt<R: Rng + CryptoRng>(
             SignalProtocolError::InternalError("failed to encrypt using AES-GCM-SIV")
         })?;
 
-    // Uses a flat representation: count || UUID_i || deviceId_i || C_i || AT_i || ... || E.pub || ciphertext
+    // Uses a flat representation: count || UUID_i || deviceId_i || registrationId_i || C_i || AT_i || ... || E.pub || ciphertext
     let version = SEALED_SENDER_V2_VERSION;
     let mut serialized: Vec<u8> = vec![(version | (version << 4))];
 
@@ -903,7 +912,7 @@ pub async fn sealed_sender_multi_recipient_encrypt<R: Rng + CryptoRng>(
         .expect("cannot fail encoding to Vec");
 
     let our_identity = identity_store.get_identity_key_pair(ctx).await?;
-    for destination in destinations {
+    for (destination, session) in destinations.iter().zip(destination_sessions) {
         let their_uuid = Uuid::parse_str(destination.name()).map_err(|_| {
             SignalProtocolError::InvalidArgument(format!(
                 "multi-recipient sealed sender requires UUID recipients (not {})",
@@ -915,6 +924,17 @@ pub async fn sealed_sender_multi_recipient_encrypt<R: Rng + CryptoRng>(
             .get_identity(destination, ctx)
             .await?
             .ok_or_else(|| SignalProtocolError::SessionNotFound(format!("{}", destination)))?;
+
+        let their_registration_id = session.remote_registration_id()?;
+        let their_registration_id = u16::try_from(their_registration_id).map_err(|_| {
+            SignalProtocolError::InvalidState(
+                "remote_registration_id",
+                format!(
+                    "{} has too-high registration ID {:#X}",
+                    destination, their_registration_id
+                ),
+            )
+        })?;
 
         let c_i = sealed_sender_v2::apply_agreement_xor(
             &keys.e,
@@ -934,6 +954,7 @@ pub async fn sealed_sender_multi_recipient_encrypt<R: Rng + CryptoRng>(
         serialized.extend_from_slice(their_uuid.as_bytes());
         prost::encode_length_delimiter(destination.device_id() as usize, &mut serialized)
             .expect("cannot fail encoding to Vec");
+        serialized.extend_from_slice(&their_registration_id.to_be_bytes());
         serialized.extend_from_slice(&c_i);
         serialized.extend_from_slice(&at_i);
     }
@@ -978,6 +999,8 @@ pub fn sealed_sender_multi_recipient_fan_out(data: &[u8]) -> Result<Vec<Vec<u8>>
         let _ = advance(&mut remaining, 16)?;
         // Skip device ID.
         let _ = decode_varint(&mut remaining)?;
+        // Skip registration ID.
+        let _ = advance(&mut remaining, 2)?;
         // Read C_i and AT_i.
         let c_and_at = advance(&mut remaining, 32 + 16)?;
 

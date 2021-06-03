@@ -14,7 +14,9 @@ use crate::support::*;
 use crate::*;
 
 bridge_handle!(CiphertextMessage, clone = false, jni = false);
+bridge_handle!(DecryptionErrorMessage);
 bridge_handle!(Fingerprint, jni = NumericFingerprintGenerator);
+bridge_handle!(PlaintextContent);
 bridge_handle!(PreKeyBundle);
 bridge_handle!(PreKeyRecord);
 bridge_handle!(PreKeySignalMessage);
@@ -38,10 +40,11 @@ fn HKDF_DeriveSecrets<E: Env>(
     output_length: u32,
     version: u32,
     ikm: &[u8],
-    label: &[u8],
+    label: Option<&[u8]>,
     salt: Option<&[u8]>,
 ) -> Result<E::Buffer> {
     let kdf = HKDF::new(version)?;
+    let label = label.unwrap_or(&[]);
     let buffer = match salt {
         Some(salt) => kdf.derive_salted_secrets(ikm, salt, label, output_length as usize)?,
         None => kdf.derive_secrets(ikm, label, output_length as usize)?,
@@ -355,8 +358,10 @@ fn SenderKeyMessageGetDistributionId(out: &mut [u8; 16], obj: &SenderKeyMessage)
     Ok(())
 }
 
+// For testing
 #[bridge_fn]
 fn SenderKeyMessage_New(
+    message_version: u8,
     distribution_id: Uuid,
     chain_id: u32,
     iteration: u32,
@@ -365,6 +370,7 @@ fn SenderKeyMessage_New(
 ) -> Result<SenderKeyMessage> {
     let mut csprng = rand::rngs::OsRng;
     SenderKeyMessage::new(
+        message_version,
         distribution_id,
         chain_id,
         iteration,
@@ -412,15 +418,24 @@ fn SenderKeyDistributionMessageGetDistributionId(
     Ok(())
 }
 
+// For testing
 #[bridge_fn]
 fn SenderKeyDistributionMessage_New(
+    message_version: u8,
     distribution_id: Uuid,
     chain_id: u32,
     iteration: u32,
     chainkey: &[u8],
     pk: &PublicKey,
 ) -> Result<SenderKeyDistributionMessage> {
-    SenderKeyDistributionMessage::new(distribution_id, chain_id, iteration, chainkey.into(), *pk)
+    SenderKeyDistributionMessage::new(
+        message_version,
+        distribution_id,
+        chain_id,
+        iteration,
+        chainkey.into(),
+        *pk,
+    )
 }
 
 #[bridge_fn(jni = false, node = false)]
@@ -428,6 +443,64 @@ fn SenderKeyDistributionMessage_GetSignatureKey(
     m: &SenderKeyDistributionMessage,
 ) -> Result<PublicKey> {
     Ok(*m.signing_key()?)
+}
+
+bridge_deserialize!(DecryptionErrorMessage::try_from);
+bridge_get!(DecryptionErrorMessage::timestamp -> u64);
+bridge_get!(DecryptionErrorMessage::device_id -> u32);
+bridge_get_bytearray!(
+    DecryptionErrorMessage::serialized as Serialize,
+    jni = "DecryptionErrorMessage_1GetSerialized"
+);
+
+#[bridge_fn]
+fn DecryptionErrorMessage_GetRatchetKey(m: &DecryptionErrorMessage) -> Option<PublicKey> {
+    m.ratchet_key().cloned()
+}
+
+#[bridge_fn]
+fn DecryptionErrorMessage_ForOriginalMessage(
+    original_bytes: &[u8],
+    original_type: u8,
+    original_timestamp: u64,
+    original_sender_device_id: u32,
+) -> Result<DecryptionErrorMessage> {
+    let original_type = CiphertextMessageType::try_from(original_type).map_err(|_| {
+        SignalProtocolError::InvalidArgument(format!("unknown message type {}", original_type))
+    })?;
+    Ok(DecryptionErrorMessage::for_original(
+        original_bytes,
+        original_type,
+        original_timestamp,
+        original_sender_device_id,
+    )?)
+}
+
+#[bridge_fn]
+fn DecryptionErrorMessage_ExtractFromSerializedContent(
+    bytes: &[u8],
+) -> Result<DecryptionErrorMessage> {
+    extract_decryption_error_message_from_serialized_content(bytes)
+}
+
+bridge_deserialize!(PlaintextContent::try_from);
+bridge_get_bytearray!(
+    PlaintextContent::serialized as Serialize,
+    jni = "PlaintextContent_1GetSerialized"
+);
+bridge_get_bytearray!(PlaintextContent::body);
+
+#[bridge_fn]
+fn PlaintextContent_FromDecryptionErrorMessage(m: &DecryptionErrorMessage) -> PlaintextContent {
+    PlaintextContent::from(m.clone())
+}
+
+/// Save an allocation by decrypting all in one go.
+///
+/// Only useful for APIs that *do* decrypt all in one go, which is currently just Java.
+#[bridge_fn_buffer(ffi = false, node = false)]
+fn PlaintextContent_DeserializeAndGetContent<E: Env>(env: E, bytes: &[u8]) -> Result<E::Buffer> {
+    Ok(env.buffer(PlaintextContent::try_from(bytes)?.body()))
 }
 
 #[bridge_fn]
@@ -622,8 +695,8 @@ fn UnidentifiedSenderMessageContent_GetMsgType(m: &UnidentifiedSenderMessageCont
 #[repr(C)]
 pub enum FfiContentHint {
     Default = 0,
-    Supplementary = 1,
-    Retry = 2,
+    Resendable = 1,
+    Implicit = 2,
 }
 
 const_assert_eq!(
@@ -631,10 +704,13 @@ const_assert_eq!(
     ContentHint::Default.to_u32(),
 );
 const_assert_eq!(
-    FfiContentHint::Supplementary as u32,
-    ContentHint::Supplementary.to_u32(),
+    FfiContentHint::Resendable as u32,
+    ContentHint::Resendable.to_u32(),
 );
-const_assert_eq!(FfiContentHint::Retry as u32, ContentHint::Retry.to_u32());
+const_assert_eq!(
+    FfiContentHint::Implicit as u32,
+    ContentHint::Implicit.to_u32()
+);
 
 #[bridge_fn]
 fn UnidentifiedSenderMessageContent_GetContentHint(
@@ -707,6 +783,7 @@ pub enum FfiCiphertextMessageType {
     Whisper = 2,
     PreKey = 3,
     SenderKey = 7,
+    Plaintext = 8,
 }
 
 const_assert_eq!(
@@ -721,6 +798,10 @@ const_assert_eq!(
     FfiCiphertextMessageType::SenderKey as u8,
     CiphertextMessageType::SenderKey as u8
 );
+const_assert_eq!(
+    FfiCiphertextMessageType::Plaintext as u8,
+    CiphertextMessageType::Plaintext as u8
+);
 
 #[bridge_fn(jni = false)]
 fn CiphertextMessage_Type(msg: &CiphertextMessage) -> u8 {
@@ -728,6 +809,11 @@ fn CiphertextMessage_Type(msg: &CiphertextMessage) -> u8 {
 }
 
 bridge_get_bytearray!(CiphertextMessage::serialize as Serialize, jni = false);
+
+#[bridge_fn(jni = false)]
+fn CiphertextMessage_FromPlaintextContent(m: &PlaintextContent) -> CiphertextMessage {
+    CiphertextMessage::PlaintextContent(m.clone())
+}
 
 #[bridge_fn(ffi = false, node = false)]
 fn SessionRecord_NewFresh() -> SessionRecord {
@@ -752,6 +838,11 @@ fn SessionRecord_GetSessionVersion(s: &SessionRecord) -> Result<u32> {
 #[bridge_fn_void]
 fn SessionRecord_ArchiveCurrentState(session_record: &mut SessionRecord) -> Result<()> {
     session_record.archive_current_state()
+}
+
+#[bridge_fn]
+fn SessionRecord_CurrentRatchetKeyMatches(s: &SessionRecord, key: &PublicKey) -> Result<bool> {
+    s.current_ratchet_key_matches(key)
 }
 
 bridge_get!(SessionRecord::has_current_session_state as HasCurrentState -> bool, jni = false);
@@ -969,10 +1060,11 @@ async fn SealedSessionCipher_Encrypt<E: Env>(
     Ok(env.buffer(ctext))
 }
 
-#[bridge_fn_buffer(jni = "SealedSessionCipher_1MultiRecipientEncrypt")]
+#[bridge_fn_buffer(jni = "SealedSessionCipher_1MultiRecipientEncrypt", node = false)]
 async fn SealedSender_MultiRecipientEncrypt<E: Env>(
     env: E,
     recipients: &[&ProtocolAddress],
+    recipient_sessions: &[&SessionRecord],
     content: &UnidentifiedSenderMessageContent,
     identity_key_store: &mut dyn IdentityKeyStore,
     ctx: Context,
@@ -980,6 +1072,30 @@ async fn SealedSender_MultiRecipientEncrypt<E: Env>(
     let mut rng = rand::rngs::OsRng;
     let ctext = sealed_sender_multi_recipient_encrypt(
         recipients,
+        recipient_sessions,
+        content,
+        identity_key_store,
+        ctx,
+        &mut rng,
+    )
+    .await?;
+    Ok(env.buffer(ctext))
+}
+
+// Node can't support the `&[&Foo]` type, so we clone the sessions instead.
+#[bridge_fn_buffer(ffi = false, jni = false, node = "SealedSender_MultiRecipientEncrypt")]
+async fn SealedSender_MultiRecipientEncryptNode<E: Env>(
+    env: E,
+    recipients: &[&ProtocolAddress],
+    recipient_sessions: &[SessionRecord],
+    content: &UnidentifiedSenderMessageContent,
+    identity_key_store: &mut dyn IdentityKeyStore,
+    ctx: Context,
+) -> Result<E::Buffer> {
+    let mut rng = rand::rngs::OsRng;
+    let ctext = sealed_sender_multi_recipient_encrypt(
+        recipients,
+        &recipient_sessions.iter().collect::<Vec<&SessionRecord>>(),
         content,
         identity_key_store,
         ctx,

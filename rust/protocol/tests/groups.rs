@@ -324,12 +324,16 @@ fn group_sealed_sender() -> Result<(), SignalProtocolError> {
             CiphertextMessageType::SenderKey,
             sender_cert.clone(),
             alice_message.serialized().to_vec(),
-            ContentHint::Supplementary,
+            ContentHint::Implicit,
             Some([42].to_vec()),
         )?;
 
+        let recipients = [&bob_uuid_address, &carol_uuid_address];
         let alice_ctext = sealed_sender_multi_recipient_encrypt(
-            &[&bob_uuid_address, &carol_uuid_address],
+            &recipients,
+            &alice_store
+                .session_store
+                .load_existing_sessions(&recipients)?,
             &alice_usmc,
             &mut alice_store.identity_store,
             None,
@@ -346,7 +350,7 @@ fn group_sealed_sender() -> Result<(), SignalProtocolError> {
         assert_eq!(bob_usmc.sender()?.sender_uuid()?, alice_uuid);
         assert_eq!(bob_usmc.sender()?.sender_e164()?, Some(alice_e164.as_ref()));
         assert_eq!(bob_usmc.sender()?.sender_device_id()?, alice_device_id);
-        assert_eq!(bob_usmc.content_hint()?, ContentHint::Supplementary);
+        assert_eq!(bob_usmc.content_hint()?, ContentHint::Implicit);
         assert_eq!(bob_usmc.group_id()?, Some(&[42][..]));
 
         let bob_plaintext = group_decrypt(
