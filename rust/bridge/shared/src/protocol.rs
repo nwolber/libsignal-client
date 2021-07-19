@@ -10,6 +10,10 @@ use static_assertions::const_assert_eq;
 use std::convert::TryFrom;
 use uuid::Uuid;
 
+// Will be unused when building for Node only.
+#[allow(unused_imports)]
+use futures_util::FutureExt;
+
 use crate::support::*;
 use crate::*;
 
@@ -96,7 +100,7 @@ bridge_get!(ProtocolAddress::name as Name -> &str, ffi = "address_get_name");
 
 #[bridge_fn(ffi = "publickey_compare", node = "PublicKey_Compare")]
 fn ECPublicKey_Compare(key1: &PublicKey, key2: &PublicKey) -> i32 {
-    match key1.cmp(&key2) {
+    match key1.cmp(key2) {
         std::cmp::Ordering::Less => -1,
         std::cmp::Ordering::Equal => 0,
         std::cmp::Ordering::Greater => 1,
@@ -105,7 +109,7 @@ fn ECPublicKey_Compare(key1: &PublicKey, key2: &PublicKey) -> i32 {
 
 #[bridge_fn(ffi = "publickey_verify", node = "PublicKey_Verify")]
 fn ECPublicKey_Verify(key: &PublicKey, message: &[u8], signature: &[u8]) -> Result<bool> {
-    key.verify_signature(&message, &signature)
+    key.verify_signature(message, signature)
 }
 
 bridge_deserialize!(
@@ -134,7 +138,7 @@ fn ECPrivateKey_GetPublicKey(k: &PrivateKey) -> Result<PublicKey> {
 #[bridge_fn_buffer(ffi = "privatekey_sign", node = "PrivateKey_Sign")]
 fn ECPrivateKey_Sign<T: Env>(env: T, key: &PrivateKey, message: &[u8]) -> Result<T::Buffer> {
     let mut rng = rand::rngs::OsRng;
-    let sig = key.calculate_signature(&message, &mut rng)?;
+    let sig = key.calculate_signature(message, &mut rng)?;
     Ok(env.buffer(sig.into_vec()))
 }
 
@@ -144,7 +148,7 @@ fn ECPrivateKey_Agree<T: Env>(
     private_key: &PrivateKey,
     public_key: &PublicKey,
 ) -> Result<T::Buffer> {
-    let dh_secret = private_key.calculate_agreement(&public_key)?;
+    let dh_secret = private_key.calculate_agreement(public_key)?;
     Ok(env.buffer(dh_secret.into_vec()))
 }
 
@@ -212,7 +216,7 @@ bridge_get!(
 
 #[bridge_fn(ffi = "fingerprint_compare")]
 fn ScannableFingerprint_Compare(fprint1: &[u8], fprint2: &[u8]) -> Result<bool> {
-    ScannableFingerprint::deserialize(&fprint1)?.compare(fprint2)
+    ScannableFingerprint::deserialize(fprint1)?.compare(fprint2)
 }
 
 bridge_deserialize!(SignalMessage::try_from, ffi = message);
@@ -260,7 +264,7 @@ fn SignalMessage_VerifyMac(
     msg.verify_mac(
         &IdentityKey::new(*sender_identity_key),
         &IdentityKey::new(*receiver_identity_key),
-        &mac_key,
+        mac_key,
     )
 }
 
@@ -468,12 +472,12 @@ fn DecryptionErrorMessage_ForOriginalMessage(
     let original_type = CiphertextMessageType::try_from(original_type).map_err(|_| {
         SignalProtocolError::InvalidArgument(format!("unknown message type {}", original_type))
     })?;
-    Ok(DecryptionErrorMessage::for_original(
+    DecryptionErrorMessage::for_original(
         original_bytes,
         original_type,
         original_timestamp,
         original_sender_device_id,
-    )?)
+    )
 }
 
 #[bridge_fn]
@@ -570,7 +574,7 @@ fn SignedPreKeyRecord_New(
     signature: &[u8],
 ) -> SignedPreKeyRecord {
     let keypair = KeyPair::new(*pub_key, *priv_key);
-    SignedPreKeyRecord::new(id, timestamp, &keypair, &signature)
+    SignedPreKeyRecord::new(id, timestamp, &keypair, signature)
 }
 
 bridge_deserialize!(PreKeyRecord::deserialize);
