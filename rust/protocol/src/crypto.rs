@@ -15,13 +15,13 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
 #[derive(Debug)]
-pub(crate) enum EncryptionError {
+pub enum EncryptionError {
     /// The key or IV is the wrong length.
     BadKeyOrIv,
 }
 
 #[derive(Debug)]
-pub(crate) enum DecryptionError {
+pub enum DecryptionError {
     /// The key or IV is the wrong length.
     BadKeyOrIv,
     /// Either the input is malformed, or the MAC doesn't match on decryption.
@@ -47,7 +47,7 @@ fn aes_256_ctr_decrypt(ctext: &[u8], key: &[u8]) -> Result<Vec<u8>, DecryptionEr
     })
 }
 
-pub(crate) fn aes_256_cbc_encrypt(
+pub fn aes_256_cbc_encrypt(
     ptext: &[u8],
     key: &[u8],
     iv: &[u8],
@@ -58,7 +58,7 @@ pub(crate) fn aes_256_cbc_encrypt(
     }
 }
 
-pub(crate) fn aes_256_cbc_decrypt(
+pub fn aes_256_cbc_decrypt(
     ctext: &[u8],
     key: &[u8],
     iv: &[u8],
@@ -75,7 +75,7 @@ pub(crate) fn aes_256_cbc_decrypt(
         .map_err(|_| DecryptionError::BadCiphertext("failed to decrypt"))
 }
 
-pub(crate) fn hmac_sha256(key: &[u8], input: &[u8]) -> [u8; 32] {
+pub fn hmac_sha256(key: &[u8], input: &[u8]) -> [u8; 32] {
     let mut hmac =
         Hmac::<Sha256>::new_from_slice(key).expect("HMAC-SHA256 should accept any size key");
     hmac.update(input);
