@@ -146,7 +146,8 @@ impl SignalMessage {
         let their_mac = &self.serialized[self.serialized.len() - Self::MAC_LENGTH..];
         let result: bool = our_mac.ct_eq(their_mac).into();
         if !result {
-            log::error!(
+            // A warning instead of an error because we try multiple sessions.
+            log::warn!(
                 "Bad Mac! Their Mac: {} Our Mac: {}",
                 hex::encode(their_mac),
                 hex::encode(our_mac)
@@ -164,12 +165,8 @@ impl SignalMessage {
         if mac_key.len() != 32 {
             return Err(SignalProtocolError::InvalidMacKeyLength(mac_key.len()));
         }
-        let mut mac = Hmac::<Sha256>::new_varkey(mac_key).map_err(|_| {
-            SignalProtocolError::InvalidArgument(format!(
-                "Invalid HMAC key length <{}>",
-                mac_key.len()
-            ))
-        })?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(mac_key)
+            .expect("HMAC-SHA256 should accept any size key");
 
         mac.update(sender_identity_key.public_key().serialize().as_ref());
         mac.update(receiver_identity_key.public_key().serialize().as_ref());

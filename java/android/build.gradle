@@ -25,6 +25,7 @@ group            = group_info
 android {
     compileSdkVersion 28
     buildToolsVersion '28.0.3'
+    ndkVersion '21.0.6113669'
 
     defaultConfig {
         minSdkVersion 19
@@ -55,7 +56,8 @@ repositories {
 }
 
 dependencies {
-    androidTestImplementation 'junit:junit:3.8.2'
+    androidTestImplementation 'com.android.support:support-annotations:24.0.0'
+    androidTestImplementation 'com.android.support.test:runner:0.5'
     api project(':java')
 }
 
@@ -127,6 +129,15 @@ task installArchives(type: Upload) {
             repository url: "file://${System.properties['user.home']}/.m2/repository"
         }
     }
+}
+
+task libsWithDebugSymbols(type: Zip) {
+    from 'src/main/jniLibs'
+    classifier 'debug-symbols'
+}
+
+artifacts {
+    archives libsWithDebugSymbols
 }
 
 tasks.withType(JavaCompile) {

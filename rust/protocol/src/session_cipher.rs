@@ -43,7 +43,11 @@ pub async fn message_encrypt(
         .remote_identity_key()?
         .ok_or(SignalProtocolError::InvalidSessionStructure)?;
 
-    let ctext = crypto::aes_256_cbc_encrypt(ptext, message_keys.cipher_key(), message_keys.iv())?;
+    let ctext = crypto::aes_256_cbc_encrypt(ptext, message_keys.cipher_key(), message_keys.iv())
+        .map_err(|_| {
+            log::error!("session state corrupt for {}", remote_address);
+            SignalProtocolError::InvalidSessionStructure
+        })?;
 
     let message = if let Some(items) = session_state.unacknowledged_pre_key_message_items()? {
         let local_registration_id = session_state.local_registration_id()?;
@@ -155,9 +159,10 @@ pub async fn message_decrypt<R: Rng + CryptoRng>(
             )
             .await
         }
-        _ => Err(SignalProtocolError::InvalidArgument(
-            "SessionCipher::decrypt cannot decrypt this message type".to_owned(),
-        )),
+        _ => Err(SignalProtocolError::InvalidArgument(format!(
+            "message_decrypt cannot be used to decrypt {:?} messages",
+            ciphertext.message_type()
+        ))),
     }
 }
 
@@ -281,10 +286,63 @@ pub async fn message_decrypt_signal<R: Rng + CryptoRng>(
 
 fn create_decryption_failure_log(
     remote_address: &ProtocolAddress,
-    errs: &[SignalProtocolError],
+    mut errs: &[SignalProtocolError],
     record: &SessionRecord,
     ciphertext: &SignalMessage,
 ) -> Result<String> {
+    fn append_session_summary(
+        lines: &mut Vec<String>,
+        idx: usize,
+        state: Result<&SessionState>,
+        err: Option<&SignalProtocolError>,
+    ) {
+        let chains = state.and_then(|state| state.all_receiver_chain_logging_info());
+        match (err, &chains) {
+            (Some(err), Ok(chains)) => {
+                lines.push(format!(
+                    "Candidate session {} failed with '{}', had {} receiver chains",
+                    idx,
+                    err,
+                    chains.len()
+                ));
+            }
+            (Some(err), Err(state_err)) => {
+                lines.push(format!(
+                    "Candidate session {} failed with '{}'; cannot get receiver chain info ({})",
+                    idx, err, state_err,
+                ));
+            }
+            (None, Ok(chains)) => {
+                lines.push(format!(
+                    "Candidate session {} had {} receiver chains",
+                    idx,
+                    chains.len()
+                ));
+            }
+            (None, Err(state_err)) => {
+                lines.push(format!(
+                    "Candidate session {}: cannot get receiver chain info ({})",
+                    idx, state_err,
+                ));
+            }
+        }
+
+        if let Ok(chains) = chains {
+            for chain in chains {
+                let chain_idx = match chain.1 {
+                    Some(i) => i.to_string(),
+                    None => "missing in protobuf".to_string(),
+                };
+
+                lines.push(format!(
+                    "Receiver chain with sender ratchet public key {} chain key index {}",
+                    hex::encode(chain.0),
+                    chain_idx
+                ));
+            }
+        }
+    }
+
     let mut lines = vec![];
 
     lines.push(format!(
@@ -294,44 +352,26 @@ fn create_decryption_failure_log(
         ciphertext.counter()
     ));
 
-    let current_session = record.session_state().ok();
-    for (idx, (state, err)) in current_session
-        .into_iter()
-        .chain(record.previous_session_states()?)
+    if let Ok(current_session) = record.session_state() {
+        let err = errs.first();
+        if err.is_some() {
+            errs = &errs[1..];
+        }
+        append_session_summary(&mut lines, 0, Ok(current_session), err);
+    } else {
+        lines.push("No current session".to_string());
+    }
+
+    for (idx, (state, err)) in record
+        .previous_session_states()
         .zip(errs.iter().map(Some).chain(std::iter::repeat(None)))
         .enumerate()
     {
-        let chains = state.all_receiver_chain_logging_info()?;
-        match err {
-            Some(err) => {
-                lines.push(format!(
-                    "Candidate session {} failed with '{}', had {} receiver chains",
-                    idx,
-                    err,
-                    chains.len()
-                ));
-            }
-            None => {
-                lines.push(format!(
-                    "Candidate session {} had {} receiver chains",
-                    idx,
-                    chains.len()
-                ));
-            }
-        }
-
-        for chain in chains {
-            let chain_idx = match chain.1 {
-                Some(i) => format!("{}", i),
-                None => "missing in protobuf".to_string(),
-            };
-
-            lines.push(format!(
-                "Receiver chain with sender ratchet public key {} chain key index {}",
-                hex::encode(chain.0),
-                chain_idx
-            ));
-        }
+        let state = match state {
+            Ok(ref state) => Ok(state),
+            Err(err) => Err(err),
+        };
+        append_session_summary(&mut lines, idx + 1, state, err);
     }
 
     Ok(lines.join("\n"))
@@ -344,7 +384,8 @@ fn decrypt_message_with_record<R: Rng + CryptoRng>(
     csprng: &mut R,
 ) -> Result<Vec<u8>> {
     let log_decryption_failure = |state: &SessionState, error: &SignalProtocolError| {
-        log::error!(
+        // A warning rather than an error because we try multiple sessions.
+        log::warn!(
             "Failed to decrypt whisper message with ratchet key: {} and counter: {}. \
              Session loaded for {}. Local session has base key: {} and counter: {}. {}",
             ciphertext
@@ -365,18 +406,22 @@ fn decrypt_message_with_record<R: Rng + CryptoRng>(
 
     if let Ok(current_state) = record.session_state() {
         let mut current_state = current_state.clone();
-        let result =
-            decrypt_message_with_state(&mut current_state, ciphertext, remote_address, csprng);
+        let result = decrypt_message_with_state(
+            CurrentOrPrevious::Current,
+            &mut current_state,
+            ciphertext,
+            remote_address,
+            csprng,
+        );
 
         match result {
             Ok(ptext) => {
-                log::debug!(
-                    "successfully decrypted with current session state (base key {})",
-                    hex::encode(
-                        current_state
-                            .sender_ratchet_key_for_logging()
-                            .expect("successful decrypt always has a valid base key")
-                    ),
+                log::info!(
+                    "decrypted message from {} with current session state (base key {})",
+                    remote_address,
+                    current_state
+                        .sender_ratchet_key_for_logging()
+                        .expect("successful decrypt always has a valid base key"),
                 );
                 record.set_session_state(current_state)?; // update the state
                 return Ok(ptext);
@@ -394,29 +439,34 @@ fn decrypt_message_with_record<R: Rng + CryptoRng>(
     // Try some old sessions:
     let mut updated_session = None;
 
-    for (idx, previous) in record.previous_session_states()?.enumerate() {
-        let mut updated = previous.clone();
+    for (idx, previous) in record.previous_session_states().enumerate() {
+        let mut previous = previous?;
 
-        let result = decrypt_message_with_state(&mut updated, ciphertext, remote_address, csprng);
+        let result = decrypt_message_with_state(
+            CurrentOrPrevious::Previous,
+            &mut previous,
+            ciphertext,
+            remote_address,
+            csprng,
+        );
 
         match result {
             Ok(ptext) => {
                 log::info!(
-                    "successfully decrypted with PREVIOUS session state (base key {})",
-                    hex::encode(
-                        previous
-                            .sender_ratchet_key_for_logging()
-                            .expect("successful decrypt always has a valid base key")
-                    ),
+                    "decrypted message from {} with PREVIOUS session state (base key {})",
+                    remote_address,
+                    previous
+                        .sender_ratchet_key_for_logging()
+                        .expect("successful decrypt always has a valid base key"),
                 );
-                updated_session = Some((ptext, idx, updated));
+                updated_session = Some((ptext, idx, previous));
                 break;
             }
             Err(SignalProtocolError::DuplicatedMessage(_, _)) => {
                 return result;
             }
             Err(e) => {
-                log_decryption_failure(previous, &e);
+                log_decryption_failure(&previous, &e);
                 errs.push(e);
             }
         }
@@ -426,12 +476,7 @@ fn decrypt_message_with_record<R: Rng + CryptoRng>(
         record.promote_old_session(idx, updated_session)?;
         Ok(ptext)
     } else {
-        let previous_state_count = || {
-            record.previous_session_states().map_or_else(
-                |e| format!("<error: {}>", e),
-                |states| states.count().to_string(),
-            )
-        };
+        let previous_state_count = || record.previous_session_states().len();
 
         if let Ok(current_state) = record.session_state() {
             log::error!(
@@ -458,7 +503,23 @@ fn decrypt_message_with_record<R: Rng + CryptoRng>(
     }
 }
 
+#[derive(Clone, Copy)]
+enum CurrentOrPrevious {
+    Current,
+    Previous,
+}
+
+impl std::fmt::Display for CurrentOrPrevious {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Current => write!(f, "current"),
+            Self::Previous => write!(f, "previous"),
+        }
+    }
+}
+
 fn decrypt_message_with_state<R: Rng + CryptoRng>(
+    current_or_previous: CurrentOrPrevious,
     state: &mut SessionState,
     ciphertext: &SignalMessage,
     remote_address: &ProtocolAddress,
@@ -497,11 +558,25 @@ fn decrypt_message_with_state<R: Rng + CryptoRng>(
         return Err(SignalProtocolError::InvalidCiphertext);
     }
 
-    let ptext = crypto::aes_256_cbc_decrypt(
+    let ptext = match crypto::aes_256_cbc_decrypt(
         ciphertext.body(),
         message_keys.cipher_key(),
         message_keys.iv(),
-    )?;
+    ) {
+        Ok(ptext) => ptext,
+        Err(crypto::DecryptionError::BadKeyOrIv) => {
+            log::warn!(
+                "{} session state corrupt for {}",
+                current_or_previous,
+                remote_address,
+            );
+            return Err(SignalProtocolError::InvalidSessionStructure);
+        }
+        Err(crypto::DecryptionError::BadCiphertext(msg)) => {
+            log::warn!("failed to decrypt 1:1 message: {}", msg);
+            return Err(SignalProtocolError::InvalidCiphertext);
+        }
+    };
 
     state.clear_unacknowledged_pre_key_message()?;
 

@@ -2,8 +2,10 @@
 members = [
     "rust/crypto",
     "rust/device-transfer",
+    "rust/hsm-enclave",
     "rust/poksho",
     "rust/protocol",
+    "rust/zkgroup",
     "rust/bridge/ffi",
     "rust/bridge/jni",
     "rust/bridge/node",
@@ -13,11 +15,16 @@ default-members = [
     "rust/device-transfer",
     "rust/poksho",
     "rust/protocol",
+    "rust/zkgroup",
 ]
+resolver = "2" # so that our dev-dependency features don't leak into products
 
 [patch.crates-io]
+# Use our fork of curve25519-dalek for eventual zkgroup support.
 curve25519-dalek = { git = 'https://github.com/signalapp/curve25519-dalek', branch = '3.0.0-lizard2' }
-neon = { git = 'https://github.com/signalapp/neon', tag = 'signal-2021-06-02' }
+
+# Use a num-bigint-dig that supports -Zbuild-std.
+num-bigint-dig = { git = 'https://github.com/dignifiedquire/num-bigint', rev = '56576b592fea6341b7e1711a1629e4cc1bfc419c' }
 
 [profile.dev.package.num-bigint-dig]
 opt-level = 2 # too slow otherwise!

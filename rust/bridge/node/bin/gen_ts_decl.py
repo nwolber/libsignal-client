@@ -28,7 +28,7 @@ def translate_to_ts(typ):
         "i32": "number",
         "u8": "number",
         "u32": "number",
-        "u64": "number",
+        "u64": "Buffer",  # FIXME: eventually this should be a bigint
         "bool": "boolean",
         "String": "string",
         "&str": "string",
@@ -38,6 +38,9 @@ def translate_to_ts(typ):
 
     if typ in type_map:
         return type_map[typ]
+
+    if typ.startswith('[u8;') or typ.startswith('&[u8;'):
+        return 'Buffer'
 
     if typ.startswith('&mutdyn'):
         return typ[7:]
@@ -95,8 +98,7 @@ def collect_decls(crate_dir, features=''):
         '--features', features,
         '--message-format=short',
         '--',
-        '-Zunstable-options',
-        '--pretty=expanded']
+        '-Zunpretty=expanded']
     rustc = subprocess.Popen(args, cwd=crate_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     (stdout, stderr) = rustc.communicate()

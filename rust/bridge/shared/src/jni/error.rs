@@ -8,8 +8,12 @@ use jni::{JNIEnv, JavaVM};
 use std::fmt;
 
 use device_transfer::Error as DeviceTransferError;
+use hsm_enclave::Error as HsmEnclaveError;
 use libsignal_protocol::*;
 use signal_crypto::Error as SignalCryptoError;
+use zkgroup::ZkGroupError;
+
+use crate::support::describe_panic;
 
 use super::*;
 
@@ -19,8 +23,11 @@ pub enum SignalJniError {
     Signal(SignalProtocolError),
     DeviceTransfer(DeviceTransferError),
     SignalCrypto(SignalCryptoError),
+    HsmEnclave(HsmEnclaveError),
+    ZkGroup(ZkGroupError),
     Jni(jni::errors::Error),
     BadJniParameter(&'static str),
+    DeserializationFailed(&'static str),
     UnexpectedJniResultType(&'static str, &'static str),
     NullHandle,
     IntegerOverflow(String),
@@ -32,7 +39,9 @@ impl fmt::Display for SignalJniError {
         match self {
             SignalJniError::Signal(s) => write!(f, "{}", s),
             SignalJniError::DeviceTransfer(s) => write!(f, "{}", s),
+            SignalJniError::HsmEnclave(e) => write!(f, "{}", e),
             SignalJniError::SignalCrypto(s) => write!(f, "{}", s),
+            SignalJniError::ZkGroup(e) => write!(f, "{}", e),
             SignalJniError::Jni(s) => write!(f, "JNI error {}", s),
             SignalJniError::NullHandle => write!(f, "null handle"),
             SignalJniError::BadJniParameter(m) => write!(f, "bad parameter type {}", m),
@@ -42,10 +51,12 @@ impl fmt::Display for SignalJniError {
             SignalJniError::IntegerOverflow(m) => {
                 write!(f, "integer overflow during conversion of {}", m)
             }
-            SignalJniError::UnexpectedPanic(e) => match e.downcast_ref::<&'static str>() {
-                Some(s) => write!(f, "unexpected panic: {}", s),
-                None => write!(f, "unknown unexpected panic"),
-            },
+            SignalJniError::DeserializationFailed(ty) => {
+                write!(f, "failed to deserialize {}", ty)
+            }
+            SignalJniError::UnexpectedPanic(e) => {
+                write!(f, "unexpected panic: {}", describe_panic(e))
+            }
         }
     }
 }
@@ -62,9 +73,21 @@ impl From<DeviceTransferError> for SignalJniError {
     }
 }
 
+impl From<HsmEnclaveError> for SignalJniError {
+    fn from(e: HsmEnclaveError) -> SignalJniError {
+        SignalJniError::HsmEnclave(e)
+    }
+}
+
 impl From<SignalCryptoError> for SignalJniError {
     fn from(e: SignalCryptoError) -> SignalJniError {
         SignalJniError::SignalCrypto(e)
+    }
+}
+
+impl From<ZkGroupError> for SignalJniError {
+    fn from(e: ZkGroupError) -> SignalJniError {
+        SignalJniError::ZkGroup(e)
     }
 }
 
@@ -123,8 +146,7 @@ impl ThrownException {
             env,
             class_type,
             "getCanonicalName",
-            jni_signature!(() -> java.lang.String),
-            &[],
+            jni_args!(() -> java.lang.String),
         )?;
 
         Ok(env.get_string(JString::from(class_name))?.into())
@@ -135,8 +157,7 @@ impl ThrownException {
             env,
             self.exception_ref.as_obj(),
             "getMessage",
-            jni_signature!(() -> java.lang.String),
-            &[],
+            jni_args!(() -> java.lang.String),
         )?;
         Ok(env.get_string(JString::from(message))?.into())
     }

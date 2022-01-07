@@ -12,6 +12,7 @@ use libsignal_bridge::ffi::*;
 use libsignal_protocol::*;
 use std::convert::TryFrom;
 use std::ffi::{c_void, CString};
+use std::panic::AssertUnwindSafe;
 
 pub mod logging;
 mod util;
@@ -59,6 +60,31 @@ pub unsafe extern "C" fn signal_error_get_message(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn signal_error_get_address(
+    err: *const SignalFfiError,
+    out: *mut *mut ProtocolAddress,
+) -> *mut SignalFfiError {
+    let err = AssertUnwindSafe(err);
+    run_ffi_safe(|| {
+        let err = err.as_ref().ok_or(SignalFfiError::NullPointer)?;
+        match err {
+            SignalFfiError::Signal(SignalProtocolError::InvalidRegistrationId(addr, _value)) => {
+                write_result_to(out, addr.clone())?;
+            }
+            _ => {
+                return Err(SignalFfiError::Signal(
+                    SignalProtocolError::InvalidArgument(format!(
+                        "cannot get address from error ({})",
+                        err
+                    )),
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn signal_error_get_type(err: *const SignalFfiError) -> u32 {
     match err.as_ref() {
         Some(err) => {
@@ -86,8 +112,9 @@ pub unsafe extern "C" fn signal_identitykeypair_deserialize(
     run_ffi_safe(|| {
         let input = as_slice(input, input_len)?;
         let identity_key_pair = IdentityKeyPair::try_from(input)?;
-        box_object::<PublicKey>(public_key, Ok(*identity_key_pair.public_key()))?;
-        box_object::<PrivateKey>(private_key, Ok(*identity_key_pair.private_key()))
+        write_result_to(public_key, *identity_key_pair.public_key())?;
+        write_result_to(private_key, *identity_key_pair.private_key())?;
+        Ok(())
     })
 }
 

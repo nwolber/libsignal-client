@@ -5,7 +5,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'SignalClient'
-  s.version          = '0.8.3'
+  s.version          = '0.12.0'
   s.summary          = 'A Swift wrapper library for communicating with the Signal messaging service.'
 
   s.homepage         = 'https://github.com/signalapp/libsignal-client'
@@ -71,9 +71,9 @@ Pod::Spec.new do |s|
     set -euo pipefail
     CARGO_BUILD_TARGET=aarch64-apple-ios swift/build_ffi.sh --release
     CARGO_BUILD_TARGET=x86_64-apple-ios swift/build_ffi.sh --release
-    CARGO_BUILD_TARGET=aarch64-apple-ios-sim swift/build_ffi.sh --release --use-xargo
-    CARGO_BUILD_TARGET=x86_64-apple-ios-macabi swift/build_ffi.sh --release --use-xargo
-    CARGO_BUILD_TARGET=aarch64-apple-ios-macabi swift/build_ffi.sh --release --use-xargo
+    CARGO_BUILD_TARGET=aarch64-apple-ios-sim swift/build_ffi.sh --release
+    CARGO_BUILD_TARGET=x86_64-apple-ios-macabi swift/build_ffi.sh --release --build-std
+    CARGO_BUILD_TARGET=aarch64-apple-ios-macabi swift/build_ffi.sh --release --build-std
   )
 
   s.test_spec 'Tests' do |test_spec|

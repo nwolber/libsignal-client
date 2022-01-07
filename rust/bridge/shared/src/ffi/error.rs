@@ -7,16 +7,21 @@ use std::convert::TryFrom;
 use std::fmt;
 
 use device_transfer::Error as DeviceTransferError;
+use hsm_enclave::Error as HsmEnclaveError;
 use libsignal_protocol::*;
 use signal_crypto::Error as SignalCryptoError;
+use zkgroup::ZkGroupError;
+
+use crate::support::describe_panic;
 
 /// The top-level error type (opaquely) returned to C clients when something goes wrong.
 #[derive(Debug)]
 pub enum SignalFfiError {
     Signal(SignalProtocolError),
     DeviceTransfer(DeviceTransferError),
+    HsmEnclave(HsmEnclaveError),
     SignalCrypto(SignalCryptoError),
-    InsufficientOutputSize(usize, usize),
+    ZkGroup(ZkGroupError),
     NullPointer,
     InvalidUtf8String,
     UnexpectedPanic(std::boxed::Box<dyn std::any::Any + std::marker::Send>),
@@ -30,20 +35,19 @@ impl fmt::Display for SignalFfiError {
             SignalFfiError::DeviceTransfer(c) => {
                 write!(f, "Device transfer operation failed: {}", c)
             }
+            SignalFfiError::HsmEnclave(e) => {
+                write!(f, "HSM enclave operation failed: {}", e)
+            }
             SignalFfiError::SignalCrypto(c) => {
                 write!(f, "Cryptographic operation failed: {}", c)
             }
+            SignalFfiError::ZkGroup(e) => write!(f, "{}", e),
             SignalFfiError::NullPointer => write!(f, "null pointer"),
             SignalFfiError::InvalidType => write!(f, "invalid type"),
             SignalFfiError::InvalidUtf8String => write!(f, "invalid UTF8 string"),
-            SignalFfiError::InsufficientOutputSize(n, h) => {
-                write!(f, "needed {} elements only {} provided", n, h)
+            SignalFfiError::UnexpectedPanic(e) => {
+                write!(f, "unexpected panic: {}", describe_panic(e))
             }
-
-            SignalFfiError::UnexpectedPanic(e) => match e.downcast_ref::<&'static str>() {
-                Some(s) => write!(f, "unexpected panic: {}", s),
-                None => write!(f, "unknown unexpected panic"),
-            },
         }
     }
 }
@@ -60,9 +64,21 @@ impl From<DeviceTransferError> for SignalFfiError {
     }
 }
 
+impl From<HsmEnclaveError> for SignalFfiError {
+    fn from(e: HsmEnclaveError) -> SignalFfiError {
+        SignalFfiError::HsmEnclave(e)
+    }
+}
+
 impl From<SignalCryptoError> for SignalFfiError {
     fn from(e: SignalCryptoError) -> SignalFfiError {
         SignalFfiError::SignalCrypto(e)
+    }
+}
+
+impl From<ZkGroupError> for SignalFfiError {
+    fn from(e: ZkGroupError) -> SignalFfiError {
+        SignalFfiError::ZkGroup(e)
     }
 }
 

@@ -1,5 +1,5 @@
 //
-// Copyright 2020 Signal Messenger, LLC
+// Copyright 2020-2021 Signal Messenger, LLC.
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
@@ -16,7 +16,6 @@ public enum SignalError: Error {
     case invalidArgument(String)
     case invalidType(String)
     case invalidUtf8String(String)
-    case insufficientOutputSize(String)
     case protobufError(String)
     case invalidCiphertext(String)
     case legacyCiphertextVersion(String)
@@ -25,14 +24,15 @@ public enum SignalError: Error {
     case invalidMessage(String)
     case invalidKey(String)
     case invalidSignature(String)
-    case fingerprintIdentifierMismatch(String)
     case fingerprintVersionMismatch(String)
     case fingerprintParsingError(String)
     case sealedSenderSelfSend(String)
     case untrustedIdentity(String)
     case invalidKeyIdentifier(String)
     case sessionNotFound(String)
+    case invalidRegistrationId(address: ProtocolAddress, message: String)
     case duplicatedMessage(String)
+    case verificationFailed(String)
     case callbackError(String)
     case unknown(UInt32, String)
 }
@@ -47,7 +47,7 @@ internal func checkError(_ error: SignalFfiErrorRef?) throws {
     let errStr = try! invokeFnReturningString {
         signal_error_get_message(error, $0)
     }
-    signal_error_free(error)
+    defer { signal_error_free(error) }
 
     switch SignalErrorCode(errType) {
     case SignalErrorCode_InvalidState:
@@ -62,8 +62,6 @@ internal func checkError(_ error: SignalFfiErrorRef?) throws {
         throw SignalError.invalidType(errStr)
     case SignalErrorCode_InvalidUtf8String:
         throw SignalError.invalidUtf8String(errStr)
-    case SignalErrorCode_InsufficientOutputSize:
-        throw SignalError.insufficientOutputSize(errStr)
     case SignalErrorCode_ProtobufError:
         throw SignalError.protobufError(errStr)
     case SignalErrorCode_InvalidCiphertext:
@@ -84,8 +82,6 @@ internal func checkError(_ error: SignalFfiErrorRef?) throws {
         throw SignalError.invalidKey(errStr)
     case SignalErrorCode_InvalidSignature:
         throw SignalError.invalidSignature(errStr)
-    case SignalErrorCode_FingerprintIdentifierMismatch:
-        throw SignalError.fingerprintIdentifierMismatch(errStr)
     case SignalErrorCode_FingerprintVersionMismatch:
         throw SignalError.fingerprintVersionMismatch(errStr)
     case SignalErrorCode_UntrustedIdentity:
@@ -94,8 +90,15 @@ internal func checkError(_ error: SignalFfiErrorRef?) throws {
         throw SignalError.invalidKeyIdentifier(errStr)
     case SignalErrorCode_SessionNotFound:
         throw SignalError.sessionNotFound(errStr)
+    case SignalErrorCode_InvalidRegistrationId:
+        let address: ProtocolAddress = try invokeFnReturningNativeHandle {
+            signal_error_get_address(error, $0)
+        }
+        throw SignalError.invalidRegistrationId(address: address, message: errStr)
     case SignalErrorCode_DuplicatedMessage:
         throw SignalError.duplicatedMessage(errStr)
+    case SignalErrorCode_VerificationFailure:
+        throw SignalError.verificationFailed(errStr)
     case SignalErrorCode_CallbackError:
         throw SignalError.callbackError(errStr)
     default:

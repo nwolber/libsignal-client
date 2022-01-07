@@ -15,13 +15,15 @@ cd "${SCRIPT_DIR}"/..
 ANDROID_LIB_DIR=java/android/src/main/jniLibs
 DESKTOP_LIB_DIR=java/java/src/main/resources
 
-export RUSTFLAGS="-C link-args=-s"
+# Keep these settings in sync with .github/workflows/jni_artifacts.yml,
+# which builds for Windows as well.
 export CARGO_PROFILE_RELEASE_DEBUG=1 # enable line tables
 # On Linux, cdylibs don't include public symbols from their dependencies,
 # even if those symbols have been re-exported in the Rust source.
 # Using LTO works around this at the cost of a slightly slower build.
 # https://github.com/rust-lang/rfcs/issues/2771
-export CARGO_PROFILE_RELEASE_LTO=thin 
+export CARGO_PROFILE_RELEASE_LTO=thin
+export CARGO_PROFILE_RELEASE_OPT_LEVEL=s # optimize for size over speed
 
 if [ "$1" = 'desktop' ];
 then

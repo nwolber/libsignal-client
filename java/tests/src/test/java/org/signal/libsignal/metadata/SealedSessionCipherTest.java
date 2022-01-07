@@ -11,6 +11,7 @@ import org.signal.libsignal.metadata.certificate.ServerCertificate;
 import org.whispersystems.libsignal.IdentityKeyPair;
 import org.whispersystems.libsignal.InvalidKeyException;
 import org.whispersystems.libsignal.InvalidMessageException;
+import org.whispersystems.libsignal.InvalidRegistrationIdException;
 import org.whispersystems.libsignal.LegacyMessageException;
 import org.whispersystems.libsignal.NoSessionException;
 import org.whispersystems.libsignal.SessionBuilder;
@@ -32,11 +33,13 @@ import org.whispersystems.libsignal.state.SessionRecord;
 import org.whispersystems.libsignal.state.SignedPreKeyRecord;
 
 import org.signal.client.internal.Native;
+import org.signal.client.internal.NativeHandleGuard;
 
 import org.whispersystems.libsignal.util.Hex;
 import org.whispersystems.libsignal.util.Pair;
 import org.whispersystems.libsignal.util.guava.Optional;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.UUID;
 
@@ -146,7 +149,7 @@ public class SealedSessionCipherTest extends TestCase {
     }
   }
 
-  public void testEncryptDecryptGroup() throws UntrustedIdentityException, InvalidKeyException, InvalidCertificateException, InvalidMessageException, InvalidMetadataMessageException, LegacyMessageException, NoSessionException, ProtocolDuplicateMessageException, ProtocolUntrustedIdentityException, ProtocolLegacyMessageException, ProtocolInvalidKeyException, InvalidMetadataVersionException, ProtocolInvalidVersionException, ProtocolInvalidMessageException, ProtocolInvalidKeyIdException, ProtocolNoSessionException, SelfSendException {
+  public void testEncryptDecryptGroup() throws UntrustedIdentityException, InvalidKeyException, InvalidCertificateException, InvalidMessageException, InvalidMetadataMessageException, InvalidRegistrationIdException, LegacyMessageException, NoSessionException, ProtocolDuplicateMessageException, ProtocolUntrustedIdentityException, ProtocolLegacyMessageException, ProtocolInvalidKeyException, InvalidMetadataVersionException, ProtocolInvalidVersionException, ProtocolInvalidMessageException, ProtocolInvalidKeyIdException, ProtocolNoSessionException, SelfSendException {
     TestInMemorySignalProtocolStore aliceStore = new TestInMemorySignalProtocolStore();
     TestInMemorySignalProtocolStore bobStore   = new TestInMemorySignalProtocolStore();
     SignalProtocolAddress bobAddress           = new SignalProtocolAddress("e80f7bbe-5b94-471e-bd8c-2173654ea3d1", 1);
@@ -188,7 +191,93 @@ public class SealedSessionCipherTest extends TestCase {
     assertTrue(Arrays.equals(plaintext.getGroupId().get(), new byte[]{42, 43}));
   }
 
-  public void testProtocolException() throws UntrustedIdentityException, InvalidKeyException, InvalidCertificateException, InvalidMessageException, InvalidMetadataMessageException, LegacyMessageException, NoSessionException, ProtocolDuplicateMessageException, ProtocolUntrustedIdentityException, ProtocolLegacyMessageException, ProtocolInvalidKeyException, InvalidMetadataVersionException, ProtocolInvalidVersionException, ProtocolInvalidMessageException, ProtocolInvalidKeyIdException, ProtocolNoSessionException, SelfSendException {
+
+  public void testEncryptGroupWithBadRegistrationId() throws UntrustedIdentityException, InvalidKeyException, InvalidCertificateException, InvalidMessageException, InvalidMetadataMessageException, InvalidRegistrationIdException, LegacyMessageException, NoSessionException, ProtocolDuplicateMessageException, ProtocolUntrustedIdentityException, ProtocolLegacyMessageException, ProtocolInvalidKeyException, InvalidMetadataVersionException, ProtocolInvalidVersionException, ProtocolInvalidMessageException, ProtocolInvalidKeyIdException, ProtocolNoSessionException, SelfSendException {
+    TestInMemorySignalProtocolStore aliceStore = new TestInMemorySignalProtocolStore();
+    TestInMemorySignalProtocolStore bobStore   = new TestInMemorySignalProtocolStore();
+    SignalProtocolAddress bobAddress           = new SignalProtocolAddress("e80f7bbe-5b94-471e-bd8c-2173654ea3d1", 1);
+
+    ECKeyPair          bobPreKey       = Curve.generateKeyPair();
+    IdentityKeyPair    bobIdentityKey  = bobStore.getIdentityKeyPair();
+    SignedPreKeyRecord bobSignedPreKey = generateSignedPreKey(bobIdentityKey, 2);
+
+    PreKeyBundle bobBundle = new PreKeyBundle(0x4000, 1, 1, bobPreKey.getPublicKey(), 2, bobSignedPreKey.getKeyPair().getPublicKey(), bobSignedPreKey.getSignature(), bobIdentityKey.getPublicKey());
+    SessionBuilder aliceSessionBuilder = new SessionBuilder(aliceStore, bobAddress);
+    aliceSessionBuilder.process(bobBundle);
+
+    ECKeyPair           trustRoot         = Curve.generateKeyPair();
+    SenderCertificate   senderCertificate = createCertificateFor(trustRoot, UUID.fromString("9d0652a3-dcc3-4d11-975f-74d61598733f"), "+14151111111", 1, aliceStore.getIdentityKeyPair().getPublicKey().getPublicKey(), 31337);
+    SealedSessionCipher aliceCipher       = new SealedSessionCipher(aliceStore, UUID.fromString("9d0652a3-dcc3-4d11-975f-74d61598733f"), "+14151111111", 1);
+
+    SignalProtocolAddress senderAddress = new SignalProtocolAddress("9d0652a3-dcc3-4d11-975f-74d61598733f", 1);
+    UUID distributionId = UUID.fromString("d1d1d1d1-7000-11eb-b32a-33b8a8a487a6");
+
+    GroupSessionBuilder aliceGroupSessionBuilder = new GroupSessionBuilder(aliceStore);
+    SenderKeyDistributionMessage sentAliceDistributionMessage = aliceGroupSessionBuilder.create(senderAddress, distributionId);
+
+    GroupCipher aliceGroupCipher = new GroupCipher(aliceStore, senderAddress);
+    CiphertextMessage ciphertextFromAlice = aliceGroupCipher.encrypt(distributionId, "smert ze smert".getBytes());
+
+    UnidentifiedSenderMessageContent usmcFromAlice = new UnidentifiedSenderMessageContent(ciphertextFromAlice, senderCertificate, UnidentifiedSenderMessageContent.CONTENT_HINT_IMPLICIT, Optional.of(new byte[]{42, 43}));
+
+    try {
+      byte[] aliceMessage = aliceCipher.multiRecipientEncrypt(Arrays.asList(bobAddress), usmcFromAlice);
+      fail("should have thrown");
+    } catch (InvalidRegistrationIdException e) {
+      assertEquals(e.getAddress(), bobAddress);
+    }
+  }
+
+  public void testEncryptGroupWithManyRecipients() throws UntrustedIdentityException, InvalidKeyException, InvalidCertificateException, InvalidMessageException, InvalidMetadataMessageException, InvalidRegistrationIdException, LegacyMessageException, NoSessionException, ProtocolDuplicateMessageException, ProtocolUntrustedIdentityException, ProtocolLegacyMessageException, ProtocolInvalidKeyException, InvalidMetadataVersionException, ProtocolInvalidVersionException, ProtocolInvalidMessageException, ProtocolInvalidKeyIdException, ProtocolNoSessionException, SelfSendException {
+    TestInMemorySignalProtocolStore aliceStore = new TestInMemorySignalProtocolStore();
+    TestInMemorySignalProtocolStore bobStore   = new TestInMemorySignalProtocolStore();
+    TestInMemorySignalProtocolStore carolStore = new TestInMemorySignalProtocolStore();
+    SignalProtocolAddress bobAddress           = new SignalProtocolAddress("e80f7bbe-5b94-471e-bd8c-2173654ea3d1", 1);
+    SignalProtocolAddress carolAddress         = new SignalProtocolAddress("38381c3b-2606-4ca7-9310-7cb927f2ab4a", 1);
+
+    ECKeyPair          bobPreKey       = Curve.generateKeyPair();
+    IdentityKeyPair    bobIdentityKey  = bobStore.getIdentityKeyPair();
+    SignedPreKeyRecord bobSignedPreKey = generateSignedPreKey(bobIdentityKey, 2);
+
+    PreKeyBundle bobBundle = new PreKeyBundle(0x1234, 1, 1, bobPreKey.getPublicKey(), 2, bobSignedPreKey.getKeyPair().getPublicKey(), bobSignedPreKey.getSignature(), bobIdentityKey.getPublicKey());
+    SessionBuilder aliceSessionBuilderForBob = new SessionBuilder(aliceStore, bobAddress);
+    aliceSessionBuilderForBob.process(bobBundle);
+
+    ECKeyPair          carolPreKey       = Curve.generateKeyPair();
+    IdentityKeyPair    carolIdentityKey  = carolStore.getIdentityKeyPair();
+    SignedPreKeyRecord carolSignedPreKey = generateSignedPreKey(carolIdentityKey, 2);
+
+    PreKeyBundle carolBundle = new PreKeyBundle(0x1111, 1, 1, carolPreKey.getPublicKey(), 2, carolSignedPreKey.getKeyPair().getPublicKey(), carolSignedPreKey.getSignature(), carolIdentityKey.getPublicKey());
+    SessionBuilder aliceSessionBuilderForCarol = new SessionBuilder(aliceStore, carolAddress);
+    aliceSessionBuilderForCarol.process(carolBundle);
+
+    ECKeyPair           trustRoot         = Curve.generateKeyPair();
+    SenderCertificate   senderCertificate = createCertificateFor(trustRoot, UUID.fromString("9d0652a3-dcc3-4d11-975f-74d61598733f"), "+14151111111", 1, aliceStore.getIdentityKeyPair().getPublicKey().getPublicKey(), 31337);
+    SealedSessionCipher aliceCipher       = new SealedSessionCipher(aliceStore, UUID.fromString("9d0652a3-dcc3-4d11-975f-74d61598733f"), "+14151111111", 1);
+
+    SignalProtocolAddress senderAddress = new SignalProtocolAddress("9d0652a3-dcc3-4d11-975f-74d61598733f", 1);
+    UUID distributionId = UUID.fromString("d1d1d1d1-7000-11eb-b32a-33b8a8a487a6");
+
+    GroupSessionBuilder aliceGroupSessionBuilder = new GroupSessionBuilder(aliceStore);
+    SenderKeyDistributionMessage sentAliceDistributionMessage = aliceGroupSessionBuilder.create(senderAddress, distributionId);
+
+    GroupCipher aliceGroupCipher = new GroupCipher(aliceStore, senderAddress);
+    CiphertextMessage ciphertextFromAlice = aliceGroupCipher.encrypt(distributionId, "smert ze smert".getBytes());
+
+    UnidentifiedSenderMessageContent usmcFromAlice = new UnidentifiedSenderMessageContent(ciphertextFromAlice, senderCertificate, UnidentifiedSenderMessageContent.CONTENT_HINT_IMPLICIT, Optional.of(new byte[]{42, 43}));
+
+    ArrayList<SignalProtocolAddress> addresses = new ArrayList<>();
+    for (int i = 0; i < 1000; ++i) {
+      // Alternate between the two to avoid peephole optimizations.
+      addresses.add(bobAddress);
+      addresses.add(carolAddress);
+    }
+
+    // Just check that we don't throw an error or crash.
+    byte[] aliceMessage = aliceCipher.multiRecipientEncrypt(addresses, usmcFromAlice);
+  }
+
+  public void testProtocolException() throws UntrustedIdentityException, InvalidKeyException, InvalidCertificateException, InvalidMessageException, InvalidMetadataMessageException, InvalidRegistrationIdException, LegacyMessageException, NoSessionException, ProtocolDuplicateMessageException, ProtocolUntrustedIdentityException, ProtocolLegacyMessageException, ProtocolInvalidKeyException, InvalidMetadataVersionException, ProtocolInvalidVersionException, ProtocolInvalidMessageException, ProtocolInvalidKeyIdException, ProtocolNoSessionException, SelfSendException {
     TestInMemorySignalProtocolStore aliceStore = new TestInMemorySignalProtocolStore();
     TestInMemorySignalProtocolStore bobStore   = new TestInMemorySignalProtocolStore();
     SignalProtocolAddress bobAddress           = new SignalProtocolAddress("e80f7bbe-5b94-471e-bd8c-2173654ea3d1", 1);
@@ -221,6 +310,7 @@ public class SealedSessionCipherTest extends TestCase {
 
     try {
       bobCipher.decrypt(new CertificateValidator(trustRoot.getPublicKey()), bobMessage, 31335);
+      fail("should have thrown");
     } catch (ProtocolNoSessionException e) {
       assertEquals(e.getSender(), "+14151111111");
       assertEquals(e.getSenderDevice(), 1);
@@ -271,10 +361,20 @@ public class SealedSessionCipherTest extends TestCase {
       throws InvalidKeyException, InvalidCertificateException {
     ECKeyPair serverKey = Curve.generateKeyPair();
 
-    ServerCertificate serverCertificate = new ServerCertificate(Native.ServerCertificate_New(1, serverKey.getPublicKey().nativeHandle(), trustRoot.getPrivateKey().nativeHandle()));
+    try (
+      NativeHandleGuard serverPublicGuard = new NativeHandleGuard(serverKey.getPublicKey());
+      NativeHandleGuard trustRootPrivateGuard = new NativeHandleGuard(trustRoot.getPrivateKey());
+    ) {
+      ServerCertificate serverCertificate = new ServerCertificate(Native.ServerCertificate_New(1, serverPublicGuard.nativeHandle(), trustRootPrivateGuard.nativeHandle()));
 
-    return new SenderCertificate(Native.SenderCertificate_New(uuid.toString(), e164, deviceId, identityKey.nativeHandle(), expires,
-                                                              serverCertificate.nativeHandle(), serverKey.getPrivateKey().nativeHandle()));
+      try (
+        NativeHandleGuard identityGuard = new NativeHandleGuard(identityKey);
+        NativeHandleGuard serverCertificateGuard = new NativeHandleGuard(serverCertificate);
+        NativeHandleGuard serverPrivateGuard = new NativeHandleGuard(serverKey.getPrivateKey());
+      ) {
+        return new SenderCertificate(Native.SenderCertificate_New(uuid.toString(), e164, deviceId, identityGuard.nativeHandle(), expires, serverCertificateGuard.nativeHandle(), serverPrivateGuard.nativeHandle()));
+      }
+    }
   }
 
   private void initializeSessions(TestInMemorySignalProtocolStore aliceStore, TestInMemorySignalProtocolStore bobStore, SignalProtocolAddress bobAddress)

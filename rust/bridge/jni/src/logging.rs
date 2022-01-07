@@ -6,8 +6,7 @@
 use jni::objects::{GlobalRef, JClass, JObject, JValue};
 use jni::sys::jint;
 use jni::{JNIEnv, JavaVM};
-use libsignal_bridge::jni_signature;
-use std::any::Any;
+use libsignal_bridge::{describe_panic, jni_args};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::process::abort;
 
@@ -82,17 +81,12 @@ impl JniLogger {
             record.line().unwrap_or(0),
             record.args(),
         );
-        let args: [JValue; 3] = [
-            level.into(),
-            env.new_string("libsignal-client")?.into(),
-            env.new_string(message)?.into(),
-        ];
-        let result = env.call_static_method(
-            &self.logger_class,
-            "log",
-            jni_signature!((int, java.lang.String, java.lang.String) -> void),
-            &args,
-        );
+        let args = jni_args!((
+            level.into() => int,
+            env.new_string("libsignal-client")? => java.lang.String,
+            env.new_string(message)? => java.lang.String,
+        ) -> void);
+        let result = env.call_static_method(&self.logger_class, "log", args.sig, &args.args);
 
         let throwable = env.exception_occurred()?;
         if **throwable == *JObject::null() {
@@ -116,17 +110,6 @@ impl log::Log for JniLogger {
     }
 
     fn flush(&self) {}
-}
-
-// See https://github.com/rust-lang/rfcs/issues/1389
-fn describe_panic(any: &Box<dyn Any + Send>) -> String {
-    if let Some(msg) = any.downcast_ref::<&str>() {
-        msg.to_string()
-    } else if let Some(msg) = any.downcast_ref::<String>() {
-        msg.to_string()
-    } else {
-        "(break on rust_panic to debug)".to_string()
-    }
 }
 
 /// A low-level version of `run_ffi_safe` that just aborts on errors.

@@ -3,16 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::convert::TryInto;
+
+use prost::Message;
+
 use crate::ratchet::{ChainKey, MessageKeys, RootKey};
-use crate::{IdentityKey, KeyPair, PrivateKey, PublicKey, Result, SignalProtocolError, HKDF};
+use crate::{IdentityKey, KeyPair, PrivateKey, PublicKey, Result, SignalProtocolError};
 
 use crate::consts;
 use crate::proto::storage::session_structure;
 use crate::proto::storage::{RecordStructure, SessionStructure};
 use crate::state::{PreKeyId, SignedPreKeyId};
-use prost::Message;
-
-use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
 pub(crate) struct UnacknowledgedPreKeyMessageItems {
@@ -116,11 +117,10 @@ impl SessionState {
     }
 
     pub(crate) fn root_key(&self) -> Result<RootKey> {
-        if self.session.root_key.len() != 32 {
-            return Err(SignalProtocolError::InvalidProtobufEncoding);
-        }
-        let hkdf = HKDF::new(self.session_version()?)?;
-        RootKey::new(hkdf, &self.session.root_key)
+        let root_key_bytes = self.session.root_key[..]
+            .try_into()
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
+        Ok(RootKey::new(root_key_bytes))
     }
 
     pub(crate) fn set_root_key(&mut self, root_key: &RootKey) -> Result<()> {
@@ -192,11 +192,10 @@ impl SessionState {
             Some((chain, _)) => match chain.chain_key {
                 None => Err(SignalProtocolError::InvalidProtobufEncoding),
                 Some(c) => {
-                    if c.key.len() != 32 {
-                        return Err(SignalProtocolError::InvalidProtobufEncoding);
-                    }
-                    let hkdf = HKDF::new(self.session_version()?)?;
-                    Ok(Some(ChainKey::new(hkdf, &c.key, c.index)?))
+                    let chain_key_bytes = c.key[..]
+                        .try_into()
+                        .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
+                    Ok(Some(ChainKey::new(chain_key_bytes, c.index)))
                 }
             },
         }
@@ -217,6 +216,7 @@ impl SessionState {
             sender_ratchet_key_private: vec![],
             chain_key: Some(chain_key),
             message_keys: vec![],
+            needs_pni_signature: false,
         };
 
         self.session.receiver_chains.push(chain);
@@ -249,6 +249,7 @@ impl SessionState {
             sender_ratchet_key_private: sender.private_key.serialize().to_vec(),
             chain_key: Some(chain_key),
             message_keys: vec![],
+            needs_pni_signature: false,
         };
 
         self.session.sender_chain = Some(new_chain);
@@ -265,8 +266,11 @@ impl SessionState {
             SignalProtocolError::InvalidState("get_sender_chain_key", "No chain key".to_owned())
         })?;
 
-        let hkdf = HKDF::new(self.session_version()?)?;
-        ChainKey::new(hkdf, &chain_key.key, chain_key.index)
+        let chain_key_bytes = chain_key.key[..]
+            .try_into()
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
+
+        Ok(ChainKey::new(chain_key_bytes, chain_key.index))
     }
 
     pub(crate) fn get_sender_chain_key_bytes(&self) -> Result<Vec<u8>> {
@@ -287,6 +291,7 @@ impl SessionState {
                 sender_ratchet_key_private: vec![],
                 chain_key: Some(chain_key),
                 message_keys: vec![],
+                needs_pni_signature: false,
             },
             Some(mut c) => {
                 c.chain_key = Some(chain_key);
@@ -310,15 +315,24 @@ impl SessionState {
                 .message_keys
                 .iter()
                 .position(|m| m.index == counter);
+
             if let Some(position) = message_key_idx {
                 let message_key = chain_and_index.0.message_keys.remove(position);
 
-                let keys = MessageKeys::new(
-                    &message_key.cipher_key,
-                    &message_key.mac_key,
-                    &message_key.iv,
-                    counter,
-                )?;
+                let cipher_key_bytes = message_key
+                    .cipher_key
+                    .try_into()
+                    .map_err(|_| SignalProtocolError::InvalidSessionStructure)?;
+                let mac_key_bytes = message_key
+                    .mac_key
+                    .try_into()
+                    .map_err(|_| SignalProtocolError::InvalidSessionStructure)?;
+                let iv_bytes = message_key
+                    .iv
+                    .try_into()
+                    .map_err(|_| SignalProtocolError::InvalidSessionStructure)?;
+
+                let keys = MessageKeys::new(cipher_key_bytes, mac_key_bytes, iv_bytes, counter);
 
                 // Update with message key removed
                 self.session.receiver_chains[chain_and_index.1] = chain_and_index.0;
@@ -435,6 +449,24 @@ impl SessionState {
     pub(crate) fn local_registration_id(&self) -> Result<u32> {
         Ok(self.session.local_registration_id)
     }
+
+    pub(crate) fn needs_pni_signature(&self) -> bool {
+        self.session
+            .sender_chain
+            .as_ref()
+            .map_or(false, |chain| chain.needs_pni_signature)
+    }
+
+    pub(crate) fn set_needs_pni_signature(&mut self, needs_pni_signature: bool) -> Result<()> {
+        let chain = &mut self.session.sender_chain.as_mut().ok_or_else(|| {
+            SignalProtocolError::InvalidState(
+                "set_needs_pni_signature",
+                "No sender chain".to_string(),
+            )
+        })?;
+        chain.needs_pni_signature = needs_pni_signature;
+        Ok(())
+    }
 }
 
 impl From<SessionStructure> for SessionState {
@@ -458,35 +490,30 @@ impl From<&SessionState> for SessionStructure {
 #[derive(Clone, Debug)]
 pub struct SessionRecord {
     current_session: Option<SessionState>,
-    previous_sessions: VecDeque<SessionState>,
+    previous_sessions: Vec<Vec<u8>>,
 }
 
 impl SessionRecord {
     pub fn new_fresh() -> Self {
         Self {
             current_session: None,
-            previous_sessions: VecDeque::new(),
+            previous_sessions: Vec::new(),
         }
     }
 
     pub(crate) fn new(state: SessionState) -> Self {
         Self {
             current_session: Some(state),
-            previous_sessions: VecDeque::new(),
+            previous_sessions: Vec::new(),
         }
     }
 
     pub fn deserialize(bytes: &[u8]) -> Result<Self> {
         let record = RecordStructure::decode(bytes)?;
 
-        let mut previous = VecDeque::with_capacity(record.previous_sessions.len());
-        for s in record.previous_sessions {
-            previous.push_back(s.into());
-        }
-
         Ok(Self {
             current_session: record.current_session.map(|s| s.into()),
-            previous_sessions: previous,
+            previous_sessions: record.previous_sessions,
         })
     }
 
@@ -494,7 +521,7 @@ impl SessionRecord {
         let session = SessionState::new(SessionStructure::decode(bytes)?);
         Ok(Self {
             current_session: Some(session),
-            previous_sessions: VecDeque::new(),
+            previous_sessions: Vec::new(),
         })
     }
 
@@ -507,7 +534,8 @@ impl SessionRecord {
             }
         }
 
-        for previous in &self.previous_sessions {
+        for previous in self.previous_session_states() {
+            let previous = previous?;
             if previous.session_version()? == version
                 && alice_base_key == previous.alice_base_key()?
             {
@@ -549,8 +577,12 @@ impl SessionRecord {
         Ok(())
     }
 
-    pub(crate) fn previous_session_states(&self) -> Result<impl Iterator<Item = &SessionState>> {
-        Ok(self.previous_sessions.iter())
+    pub(crate) fn previous_session_states(
+        &self,
+    ) -> impl ExactSizeIterator<Item = Result<SessionState>> + '_ {
+        self.previous_sessions
+            .iter()
+            .map(|bytes| Ok(SessionStructure::decode(&bytes[..])?.into()))
     }
 
     pub(crate) fn promote_old_session(
@@ -558,9 +590,12 @@ impl SessionRecord {
         old_session: usize,
         updated_session: SessionState,
     ) -> Result<()> {
-        self.previous_sessions.remove(old_session).ok_or_else(|| {
-            SignalProtocolError::InvalidState("promote_old_session", "out of range".into())
-        })?;
+        if old_session >= self.previous_sessions.len() {
+            return Err(SignalProtocolError::InternalError(
+                "tried to promote an old session that no longer exists (index out of range)",
+            ));
+        }
+        self.previous_sessions.remove(old_session);
         self.promote_state(updated_session)
     }
 
@@ -571,12 +606,12 @@ impl SessionRecord {
     }
 
     pub fn archive_current_state(&mut self) -> Result<()> {
-        if self.current_session.is_some() {
-            self.previous_sessions
-                .push_front(self.current_session.take().expect("Checked is_some"));
-            if self.previous_sessions.len() > consts::ARCHIVED_STATES_MAX_LENGTH {
-                self.previous_sessions.pop_back();
+        if let Some(current_session) = self.current_session.take() {
+            if self.previous_sessions.len() >= consts::ARCHIVED_STATES_MAX_LENGTH {
+                self.previous_sessions.pop();
             }
+            self.previous_sessions
+                .insert(0, current_session.session.encode_to_vec());
         } else {
             log::info!("Skipping archive, current session state is fresh",);
         }
@@ -587,7 +622,7 @@ impl SessionRecord {
     pub fn serialize(&self) -> Result<Vec<u8>> {
         let record = RecordStructure {
             current_session: self.current_session.as_ref().map(|s| s.into()),
-            previous_sessions: self.previous_sessions.iter().map(|s| s.into()).collect(),
+            previous_sessions: self.previous_sessions.clone(),
         };
         Ok(record.encode_to_vec())
     }
@@ -617,6 +652,15 @@ impl SessionRecord {
             Some(session) => session.has_sender_chain(),
             None => Ok(false),
         }
+    }
+
+    pub fn needs_pni_signature(&self) -> Result<bool> {
+        Ok(self.session_state()?.needs_pni_signature())
+    }
+
+    pub fn set_needs_pni_signature(&mut self, needs_pni_signature: bool) -> Result<()> {
+        self.session_state_mut()?
+            .set_needs_pni_signature(needs_pni_signature)
     }
 
     pub fn alice_base_key(&self) -> Result<&[u8]> {

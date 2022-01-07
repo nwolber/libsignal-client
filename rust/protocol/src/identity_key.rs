@@ -11,6 +11,10 @@ use std::convert::TryFrom;
 
 use prost::Message;
 
+// Used for domain separation between alternate-identity signatures and other key-to-key signatures.
+const ALTERNATE_IDENTITY_SIGNATURE_PREFIX_1: &[u8] = &[0xFF; 32];
+const ALTERNATE_IDENTITY_SIGNATURE_PREFIX_2: &[u8] = b"Signal_PNI_Signature";
+
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
 pub struct IdentityKey {
     public_key: PublicKey,
@@ -35,6 +39,17 @@ impl IdentityKey {
         let pk = PublicKey::try_from(value)?;
         Ok(Self { public_key: pk })
     }
+
+    pub fn verify_alternate_identity(&self, other: &IdentityKey, signature: &[u8]) -> Result<bool> {
+        self.public_key.verify_signature_for_multipart_message(
+            &[
+                ALTERNATE_IDENTITY_SIGNATURE_PREFIX_1,
+                ALTERNATE_IDENTITY_SIGNATURE_PREFIX_2,
+                &other.serialize(),
+            ],
+            signature,
+        )
+    }
 }
 
 impl TryFrom<&[u8]> for IdentityKey {
@@ -48,6 +63,12 @@ impl TryFrom<&[u8]> for IdentityKey {
 impl From<PublicKey> for IdentityKey {
     fn from(value: PublicKey) -> Self {
         Self { public_key: value }
+    }
+}
+
+impl From<IdentityKey> for PublicKey {
+    fn from(value: IdentityKey) -> Self {
+        value.public_key
     }
 }
 
@@ -98,6 +119,21 @@ impl IdentityKeyPair {
         let result = structure.encode_to_vec();
         result.into_boxed_slice()
     }
+
+    pub fn sign_alternate_identity<R: Rng + CryptoRng>(
+        &self,
+        other: &IdentityKey,
+        rng: &mut R,
+    ) -> Result<Box<[u8]>> {
+        self.private_key.calculate_signature_for_multipart_message(
+            &[
+                ALTERNATE_IDENTITY_SIGNATURE_PREFIX_1,
+                ALTERNATE_IDENTITY_SIGNATURE_PREFIX_2,
+                &other.serialize(),
+            ],
+            rng,
+        )
+    }
 }
 
 impl TryFrom<&[u8]> for IdentityKeyPair {
@@ -127,6 +163,12 @@ impl From<KeyPair> for IdentityKeyPair {
             identity_key: value.public_key.into(),
             private_key: value.private_key,
         }
+    }
+}
+
+impl From<IdentityKeyPair> for KeyPair {
+    fn from(value: IdentityKeyPair) -> Self {
+        Self::new(value.identity_key.into(), value.private_key)
     }
 }
 
@@ -161,6 +203,38 @@ mod tests {
             identity_key_pair.private_key().serialize(),
             deserialized_identity_key_pair.private_key().serialize()
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_alternate_identity_signing() -> Result<()> {
+        let primary = IdentityKeyPair::generate(&mut OsRng);
+        let secondary = IdentityKeyPair::generate(&mut OsRng);
+
+        let signature = secondary.sign_alternate_identity(primary.identity_key(), &mut OsRng)?;
+        assert!(secondary
+            .identity_key()
+            .verify_alternate_identity(primary.identity_key(), &signature)?);
+        // Not symmetric.
+        assert!(!primary
+            .identity_key()
+            .verify_alternate_identity(secondary.identity_key(), &signature)?);
+
+        let another_signature =
+            secondary.sign_alternate_identity(primary.identity_key(), &mut OsRng)?;
+        assert_ne!(signature, another_signature);
+        assert!(secondary
+            .identity_key()
+            .verify_alternate_identity(primary.identity_key(), &another_signature)?);
+
+        let unrelated = IdentityKeyPair::generate(&mut OsRng);
+        assert!(!secondary
+            .identity_key()
+            .verify_alternate_identity(unrelated.identity_key(), &signature)?);
+        assert!(!unrelated
+            .identity_key()
+            .verify_alternate_identity(primary.identity_key(), &signature)?);
 
         Ok(())
     }

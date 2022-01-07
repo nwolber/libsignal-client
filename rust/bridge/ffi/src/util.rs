@@ -4,11 +4,13 @@
 //
 
 use device_transfer::Error as DeviceTransferError;
+use hsm_enclave::Error as HsmEnclaveError;
 use libc::{c_char, c_uchar, size_t};
 use libsignal_bridge::ffi::*;
 use libsignal_protocol::*;
 use signal_crypto::Error as SignalCryptoError;
 use std::ffi::CString;
+use zkgroup::ZkGroupError;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -21,7 +23,6 @@ pub enum SignalErrorCode {
     InvalidArgument = 5,
     InvalidType = 6,
     InvalidUtf8String = 7,
-    InsufficientOutputSize = 8,
 
     ProtobufError = 10,
 
@@ -35,7 +36,6 @@ pub enum SignalErrorCode {
     InvalidKey = 40,
     InvalidSignature = 41,
 
-    FingerprintIdentifierMismatch = 50,
     FingerprintVersionMismatch = 51,
     FingerprintParsingError = 52,
 
@@ -44,10 +44,13 @@ pub enum SignalErrorCode {
     InvalidKeyIdentifier = 70,
 
     SessionNotFound = 80,
+    InvalidRegistrationId = 81,
 
     DuplicatedMessage = 90,
 
     CallbackError = 100,
+
+    VerificationFailure = 110,
 }
 
 impl From<&SignalFfiError> for SignalErrorCode {
@@ -60,18 +63,11 @@ impl From<&SignalFfiError> for SignalErrorCode {
             | SignalFfiError::Signal(SignalProtocolError::InternalError(_))
             | SignalFfiError::DeviceTransfer(DeviceTransferError::InternalError(_))
             | SignalFfiError::Signal(SignalProtocolError::FfiBindingError(_))
-            | SignalFfiError::Signal(SignalProtocolError::InvalidChainKeyLength(_))
-            | SignalFfiError::Signal(SignalProtocolError::InvalidRootKeyLength(_))
-            | SignalFfiError::Signal(SignalProtocolError::InvalidCipherCryptographicParameters(
-                _,
-                _,
-            ))
             | SignalFfiError::Signal(SignalProtocolError::InvalidMacKeyLength(_)) => {
                 SignalErrorCode::InternalError
             }
 
             SignalFfiError::InvalidUtf8String => SignalErrorCode::InvalidUtf8String,
-            SignalFfiError::InsufficientOutputSize(_, _) => SignalErrorCode::InsufficientOutputSize,
 
             SignalFfiError::Signal(SignalProtocolError::ProtobufEncodingError(_))
             | SignalFfiError::Signal(SignalProtocolError::ProtobufDecodingError(_)) => {
@@ -99,6 +95,7 @@ impl From<&SignalFfiError> for SignalErrorCode {
             | SignalFfiError::Signal(SignalProtocolError::BadKeyType(_))
             | SignalFfiError::Signal(SignalProtocolError::BadKeyLength(_, _))
             | SignalFfiError::DeviceTransfer(DeviceTransferError::KeyDecodingFailed)
+            | SignalFfiError::HsmEnclave(HsmEnclaveError::InvalidPublicKeyError)
             | SignalFfiError::SignalCrypto(SignalCryptoError::InvalidKeySize) => {
                 SignalErrorCode::InvalidKey
             }
@@ -107,8 +104,8 @@ impl From<&SignalFfiError> for SignalErrorCode {
                 SignalErrorCode::SessionNotFound
             }
 
-            SignalFfiError::Signal(SignalProtocolError::FingerprintIdentifierMismatch) => {
-                SignalErrorCode::FingerprintIdentifierMismatch
+            SignalFfiError::Signal(SignalProtocolError::InvalidRegistrationId(..)) => {
+                SignalErrorCode::InvalidRegistrationId
             }
 
             SignalFfiError::Signal(SignalProtocolError::FingerprintParsingError) => {
@@ -136,7 +133,8 @@ impl From<&SignalFfiError> for SignalErrorCode {
 
             SignalFfiError::Signal(SignalProtocolError::InvalidMessage(_))
             | SignalFfiError::Signal(SignalProtocolError::InvalidProtobufEncoding)
-            | SignalFfiError::Signal(SignalProtocolError::InvalidSealedSenderMessage(_)) => {
+            | SignalFfiError::Signal(SignalProtocolError::InvalidSealedSenderMessage(_))
+            | SignalFfiError::HsmEnclave(HsmEnclaveError::HSMCommunicationError(_)) => {
                 SignalErrorCode::InvalidMessage
             }
 
@@ -144,22 +142,33 @@ impl From<&SignalFfiError> for SignalErrorCode {
                 SignalErrorCode::LegacyCiphertextVersion
             }
 
-            SignalFfiError::Signal(SignalProtocolError::UntrustedIdentity(_)) => {
+            SignalFfiError::Signal(SignalProtocolError::UntrustedIdentity(_))
+            | SignalFfiError::HsmEnclave(HsmEnclaveError::TrustedCodeError) => {
                 SignalErrorCode::UntrustedIdentity
             }
 
             SignalFfiError::Signal(SignalProtocolError::InvalidState(_, _))
             | SignalFfiError::Signal(SignalProtocolError::NoSenderKeyState)
-            | SignalFfiError::Signal(SignalProtocolError::InvalidSessionStructure) => {
+            | SignalFfiError::Signal(SignalProtocolError::InvalidSessionStructure)
+            | SignalFfiError::HsmEnclave(HsmEnclaveError::InvalidBridgeStateError) => {
                 SignalErrorCode::InvalidState
             }
 
             SignalFfiError::Signal(SignalProtocolError::InvalidArgument(_))
-            | SignalFfiError::SignalCrypto(_) => SignalErrorCode::InvalidArgument,
+            | SignalFfiError::HsmEnclave(HsmEnclaveError::InvalidCodeHashError)
+            | SignalFfiError::SignalCrypto(_)
+            | SignalFfiError::ZkGroup(ZkGroupError::BadArgs) => SignalErrorCode::InvalidArgument,
 
             SignalFfiError::Signal(SignalProtocolError::ApplicationCallbackError(_, _)) => {
                 SignalErrorCode::CallbackError
             }
+
+            SignalFfiError::ZkGroup(
+                ZkGroupError::DecryptionFailure
+                | ZkGroupError::MacVerificationFailure
+                | ZkGroupError::ProofVerificationFailure
+                | ZkGroupError::SignatureVerificationFailure,
+            ) => SignalErrorCode::VerificationFailure,
         }
     }
 }

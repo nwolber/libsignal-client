@@ -6,8 +6,11 @@
 use libc::{c_char, c_uchar, c_void};
 use libsignal_protocol::*;
 use paste::paste;
+use std::convert::TryInto;
 use std::ffi::CStr;
-use std::{borrow::Cow, ops::Deref};
+use std::ops::Deref;
+
+use crate::support::{FixedLengthBincodeSerializable, Serialized};
 
 use super::*;
 
@@ -246,6 +249,28 @@ impl SimpleArgTypeInfo for uuid::Uuid {
     }
 }
 
+impl ResultTypeInfo for uuid::Uuid {
+    type ResultType = uuid::Bytes;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        Ok(*self.as_bytes())
+    }
+}
+
+impl<const LEN: usize> SimpleArgTypeInfo for &'_ [u8; LEN] {
+    type ArgType = *const [u8; LEN];
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn convert_from(arg: *const [u8; LEN]) -> SignalFfiResult<Self> {
+        unsafe { arg.as_ref() }.ok_or(SignalFfiError::NullPointer)
+    }
+}
+
+impl<const LEN: usize> ResultTypeInfo for [u8; LEN] {
+    type ResultType = [u8; LEN];
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        Ok(self)
+    }
+}
+
 macro_rules! store {
     ($name:ident) => {
         paste! {
@@ -279,6 +304,13 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, SignalProtocolError> {
     }
 }
 
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, hsm_enclave::Error> {
+    type ResultType = T::ResultType;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        T::convert_into(self?)
+    }
+}
+
 impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, device_transfer::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
@@ -287,6 +319,13 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, device_transfer::Error> {
 }
 
 impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, signal_crypto::Error> {
+    type ResultType = T::ResultType;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        T::convert_into(self?)
+    }
+}
+
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupError> {
     type ResultType = T::ResultType;
     fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
         T::convert_into(self?)
@@ -336,14 +375,121 @@ impl ResultTypeInfo for Option<u32> {
     }
 }
 
-/// A dummy type used to implement [`crate::support::Env`].
-pub(crate) struct Env;
+impl SimpleArgTypeInfo for crate::protocol::Timestamp {
+    type ArgType = u64;
+    fn convert_from(foreign: Self::ArgType) -> SignalFfiResult<Self> {
+        Ok(Self::from_millis(foreign))
+    }
+}
 
-/// Returns a Rust-owned boxed `[u8]`, which will be split up into a pointer/length pair.
-impl crate::support::Env for Env {
-    type Buffer = Box<[u8]>;
-    fn buffer<'a, T: Into<Cow<'a, [u8]>>>(self, input: T) -> Self::Buffer {
-        input.into().into()
+impl ResultTypeInfo for crate::protocol::Timestamp {
+    type ResultType = u64;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        Ok(self.as_millis())
+    }
+}
+
+/// A marker for Rust objects exposed as opaque pointers.
+///
+/// When we do this, we hand the lifetime over to the app. Since we don't know how long the object
+/// will be kept alive, it can't (safely) have references to anything with a non-static lifetime.
+pub trait BridgeHandle: 'static {}
+
+impl<T: BridgeHandle> SimpleArgTypeInfo for &T {
+    type ArgType = *const T;
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn convert_from(foreign: *const T) -> SignalFfiResult<Self> {
+        unsafe { native_handle_cast(foreign) }
+    }
+}
+
+impl<T: BridgeHandle> SimpleArgTypeInfo for Option<&T> {
+    type ArgType = *const T;
+    fn convert_from(foreign: *const T) -> SignalFfiResult<Self> {
+        if foreign.is_null() {
+            Ok(None)
+        } else {
+            <&T>::convert_from(foreign).map(Some)
+        }
+    }
+}
+
+impl<T: BridgeHandle> SimpleArgTypeInfo for &mut T {
+    type ArgType = *mut T;
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn convert_from(foreign: *mut T) -> SignalFfiResult<Self> {
+        unsafe { native_handle_cast_mut(foreign) }
+    }
+}
+
+impl<T: BridgeHandle> SizedArgTypeInfo for &[&T] {
+    type ArgType = *const *const T;
+    fn convert_from(input: Self::ArgType, input_len: usize) -> SignalFfiResult<Self> {
+        if input.is_null() {
+            if input_len != 0 {
+                return Err(SignalFfiError::NullPointer);
+            }
+            // We can't just fall through because slice::from_raw_parts still expects a non-null pointer. Reference a dummy buffer instead.
+            return Ok(&[]);
+        }
+
+        let slice_of_pointers = unsafe { std::slice::from_raw_parts(input, input_len) };
+
+        if slice_of_pointers.contains(&std::ptr::null()) {
+            return Err(SignalFfiError::NullPointer);
+        }
+
+        let base_ptr_for_slice_of_refs = input as *const &T;
+
+        unsafe {
+            Ok(std::slice::from_raw_parts(
+                base_ptr_for_slice_of_refs,
+                input_len,
+            ))
+        }
+    }
+}
+
+impl<T: BridgeHandle> ResultTypeInfo for T {
+    type ResultType = *mut T;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        Ok(Box::into_raw(Box::new(self)))
+    }
+}
+
+impl<T: BridgeHandle> ResultTypeInfo for Option<T> {
+    type ResultType = *mut T;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        match self {
+            Some(obj) => obj.convert_into(),
+            None => Ok(std::ptr::null_mut()),
+        }
+    }
+}
+
+impl<T> SimpleArgTypeInfo for Serialized<T>
+where
+    T: FixedLengthBincodeSerializable + for<'a> serde::Deserialize<'a>,
+{
+    type ArgType = *const T::Array;
+
+    fn convert_from(foreign: Self::ArgType) -> SignalFfiResult<Self> {
+        let array = unsafe { foreign.as_ref() }.ok_or(SignalFfiError::NullPointer)?;
+        let result: T =
+            bincode::deserialize(array.as_ref()).map_err(|_| SignalFfiError::InvalidType)?;
+        Ok(Serialized::from(result))
+    }
+}
+
+impl<T> ResultTypeInfo for Serialized<T>
+where
+    T: FixedLengthBincodeSerializable + serde::Serialize,
+{
+    type ResultType = T::Array;
+
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        let result = bincode::serialize(self.deref()).expect("can always serialize a value");
+        Ok(result.as_slice().try_into().expect("wrong serialized size"))
     }
 }
 
@@ -351,67 +497,7 @@ impl crate::support::Env for Env {
 macro_rules! ffi_bridge_handle {
     ( $typ:ty as false $(, $($_:tt)*)? ) => {};
     ( $typ:ty as $ffi_name:ident, clone = false ) => {
-        impl ffi::SimpleArgTypeInfo for &$typ {
-            type ArgType = *const $typ;
-            #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            fn convert_from(foreign: *const $typ) -> ffi::SignalFfiResult<Self> {
-                unsafe { ffi::native_handle_cast(foreign) }
-            }
-        }
-        impl ffi::SimpleArgTypeInfo for Option<&$typ> {
-            type ArgType = *const $typ;
-            fn convert_from(foreign: *const $typ) -> ffi::SignalFfiResult<Self> {
-                if foreign.is_null() {
-                    Ok(None)
-                } else {
-                    <&$typ>::convert_from(foreign).map(Some)
-                }
-            }
-        }
-        impl ffi::SimpleArgTypeInfo for &mut $typ {
-            type ArgType = *mut $typ;
-            #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            fn convert_from(foreign: *mut $typ) -> ffi::SignalFfiResult<Self> {
-                unsafe { ffi::native_handle_cast_mut(foreign) }
-            }
-        }
-        impl ffi::SizedArgTypeInfo for &[& $typ] {
-            type ArgType = *const *const $typ;
-            fn convert_from(input: Self::ArgType, input_len: usize) -> ffi::SignalFfiResult<Self> {
-                if input.is_null() {
-                    if input_len != 0 {
-                        return Err(ffi::SignalFfiError::NullPointer);
-                    }
-                    // We can't just fall through because slice::from_raw_parts still expects a non-null pointer. Reference a dummy buffer instead.
-                    return Ok(&[]);
-                }
-
-                let slice_of_pointers = unsafe { std::slice::from_raw_parts(input, input_len) };
-
-                if slice_of_pointers.contains(&std::ptr::null()) {
-                    return Err(ffi::SignalFfiError::NullPointer);
-                }
-
-                let base_ptr_for_slice_of_refs = input as *const & $typ;
-
-                unsafe { Ok(std::slice::from_raw_parts(base_ptr_for_slice_of_refs, input_len)) }
-            }
-        }
-        impl ffi::ResultTypeInfo for $typ {
-            type ResultType = *mut $typ;
-            fn convert_into(self) -> ffi::SignalFfiResult<Self::ResultType> {
-                Ok(Box::into_raw(Box::new(self)))
-            }
-        }
-        impl ffi::ResultTypeInfo for Option<$typ> {
-            type ResultType = *mut $typ;
-            fn convert_into(self) -> ffi::SignalFfiResult<Self::ResultType> {
-                match self {
-                    Some(obj) => obj.convert_into(),
-                    None => Ok(std::ptr::null_mut()),
-                }
-            }
-        }
+        impl ffi::BridgeHandle for $typ {}
         ffi_bridge_destroy!($typ as $ffi_name);
     };
     ( $typ:ty as $ffi_name:ident ) => {
@@ -424,7 +510,7 @@ macro_rules! ffi_bridge_handle {
             ) -> *mut ffi::SignalFfiError {
                 ffi::run_ffi_safe(|| {
                     let obj = ffi::native_handle_cast::<$typ>(obj)?;
-                    ffi::box_object::<$typ>(new_obj, Ok(obj.clone()))
+                    ffi::write_result_to::<$typ>(new_obj, obj.clone())
                 })
             }
         }
@@ -476,18 +562,25 @@ macro_rules! ffi_arg_type {
     (u64) => (u64);
     (Option<u32>) => (u32);
     (usize) => (libc::size_t);
+    (bool) => (bool);
     (&[u8]) => (*const libc::c_uchar);
     (&mut [u8]) => (*mut libc::c_uchar);
     (String) => (*const libc::c_char);
     (Option<String>) => (*const libc::c_char);
     (Option<&str>) => (*const libc::c_char);
     (Context) => (*mut libc::c_void);
+    (Timestamp) => (u64);
     (Uuid) => (*const [u8; 16]);
+    (&[u8; $len:expr]) => (*const [u8; $len]);
     (&[& $typ:ty]) => (*const *const $typ);
     (&mut dyn $typ:ty) => (*const paste!(ffi::[<Ffi $typ Struct>]));
     (& $typ:ty) => (*const $typ);
     (&mut $typ:ty) => (*mut $typ);
     (Option<& $typ:ty>) => (*const $typ);
+
+    // In order to provide a fixed-sized array of the correct length,
+    // a serialized type FooBar must have a constant FOO_BAR_LEN that's in scope (and exposed to C).
+    (Serialized<$typ:ident>) => (*const [libc::c_uchar; paste!([<$typ:snake:upper _LEN>])]);
 }
 
 /// Syntactically translates `bridge_fn` result types to FFI types for `cbindgen`.
@@ -516,5 +609,13 @@ macro_rules! ffi_result_type {
     (Option<String>) => (*const libc::c_char);
     (Option<&str>) => (*const libc::c_char);
     (Option<$typ:ty>) => (*mut $typ);
+    (Timestamp) => (u64);
+    (Uuid) => ([u8; 16]);
+    ([u8; $len:expr]) => ([u8; $len]);
+
+    // In order to provide a fixed-sized array of the correct length,
+    // a serialized type FooBar must have a constant FOO_BAR_LEN that's in scope (and exposed to C).
+    (Serialized<$typ:ident>) => ([libc::c_uchar; paste!([<$typ:snake:upper _LEN>])]);
+
     ( $typ:ty ) => (*mut $typ);
 }
