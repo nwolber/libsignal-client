@@ -9,7 +9,7 @@ use paste::paste;
 use std::fmt;
 
 const ERRORS_PROPERTY_NAME: &str = "Errors";
-const ERROR_CLASS_NAME: &str = "SignalClientErrorBase";
+const ERROR_CLASS_NAME: &str = "LibSignalErrorBase";
 
 #[allow(non_snake_case)]
 fn node_registerErrors(mut cx: FunctionContext) -> JsResult<JsValue> {
@@ -29,12 +29,8 @@ fn new_js_error<'a>(
     extra_props: Option<Handle<'a, JsObject>>,
 ) -> Option<Handle<'a, JsObject>> {
     let result = cx.try_catch(|cx| {
-        let errors_module: Handle<JsObject> = module
-            .get(cx, ERRORS_PROPERTY_NAME)?
-            .downcast_or_throw(cx)?;
-        let error_class: Handle<JsFunction> = errors_module
-            .get(cx, ERROR_CLASS_NAME)?
-            .downcast_or_throw(cx)?;
+        let errors_module: Handle<JsObject> = module.get(cx, ERRORS_PROPERTY_NAME)?;
+        let error_class: Handle<JsFunction> = errors_module.get(cx, ERROR_CLASS_NAME)?;
         let name_arg = match name {
             Some(name) => cx.string(name).upcast(),
             None => cx.undefined().upcast(),
@@ -44,7 +40,7 @@ fn new_js_error<'a>(
             None => cx.undefined().upcast(),
         };
 
-        let args: Vec<Handle<JsValue>> = vec![
+        let args: &[Handle<JsValue>] = &[
             cx.string(message).upcast(),
             name_arg,
             cx.string(operation).upcast(),
@@ -57,7 +53,7 @@ fn new_js_error<'a>(
         Err(failure) => {
             log::warn!(
                 "could not construct {}: {}",
-                name.unwrap_or("SignalClientError"),
+                name.unwrap_or("LibSignalError"),
                 failure
                     .to_string(cx)
                     .map(|s| s.value(cx))
@@ -148,6 +144,28 @@ impl SignalNodeError for SignalProtocolError {
                     Some(props),
                 )
             }
+            SignalProtocolError::InvalidSessionStructure(..) => new_js_error(
+                cx,
+                module,
+                Some("InvalidSession"),
+                &self.to_string(),
+                operation_name,
+                None,
+            ),
+            SignalProtocolError::InvalidSenderKeySession { distribution_id } => {
+                let props = cx.empty_object();
+                let distribution_id_str =
+                    cx.string(format!("{:x}", distribution_id.to_hyphenated_ref()));
+                props.set(cx, "distribution_id", distribution_id_str)?;
+                new_js_error(
+                    cx,
+                    module,
+                    Some("InvalidSenderKeySession"),
+                    &self.to_string(),
+                    operation_name,
+                    Some(props),
+                )
+            }
             _ => new_js_error(cx, module, None, &self.to_string(), operation_name, None),
         };
 
@@ -163,11 +181,15 @@ impl SignalNodeError for SignalProtocolError {
 
 impl SignalNodeError for device_transfer::Error {}
 
-impl SignalNodeError for hsm_enclave::Error {}
+impl SignalNodeError for attest::hsm_enclave::Error {}
+
+impl SignalNodeError for attest::cds2::Error {}
 
 impl SignalNodeError for signal_crypto::Error {}
 
-impl SignalNodeError for zkgroup::ZkGroupError {}
+impl SignalNodeError for zkgroup::ZkGroupVerificationFailure {}
+
+impl SignalNodeError for zkgroup::ZkGroupDeserializationFailure {}
 
 /// Represents an error returned by a callback.
 #[derive(Debug)]

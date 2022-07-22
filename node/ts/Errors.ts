@@ -14,9 +14,11 @@ export enum ErrorCode {
   UntrustedIdentity,
   InvalidRegistrationId,
   VerificationFailed,
+  InvalidSession,
+  InvalidSenderKeySession,
 }
 
-export class SignalClientErrorBase extends Error {
+export class LibSignalErrorBase extends Error {
   public readonly code: ErrorCode;
   public readonly operation: string;
   readonly _addr?: string | Native.ProtocolAddress;
@@ -33,7 +35,7 @@ export class SignalClientErrorBase extends Error {
       this.name = name;
       this.code = ErrorCode[name];
     } else {
-      this.name = 'SignalClientError';
+      this.name = 'LibSignalError';
       this.code = ErrorCode.Generic;
     }
     this.operation = operation;
@@ -62,38 +64,49 @@ export class SignalClientErrorBase extends Error {
   }
 }
 
-export type SignalClientErrorCommon = Omit<SignalClientErrorBase, 'addr'>;
+export type LibSignalErrorCommon = Omit<LibSignalErrorBase, 'addr'>;
 
-export type GenericError = SignalClientErrorCommon & {
+export type GenericError = LibSignalErrorCommon & {
   code: ErrorCode.Generic;
 };
 
-export type DuplicatedMessageError = SignalClientErrorCommon & {
+export type DuplicatedMessageError = LibSignalErrorCommon & {
   code: ErrorCode.DuplicatedMessage;
 };
 
-export type SealedSenderSelfSendError = SignalClientErrorCommon & {
+export type SealedSenderSelfSendError = LibSignalErrorCommon & {
   code: ErrorCode.SealedSenderSelfSend;
 };
 
-export type UntrustedIdentityError = SignalClientErrorCommon & {
+export type UntrustedIdentityError = LibSignalErrorCommon & {
   code: ErrorCode.UntrustedIdentity;
   addr: string;
 };
 
-export type InvalidRegistrationIdError = SignalClientErrorCommon & {
+export type InvalidRegistrationIdError = LibSignalErrorCommon & {
   code: ErrorCode.InvalidRegistrationId;
   addr: ProtocolAddress;
 };
 
-export type VerificationFailedError = SignalClientErrorCommon & {
+export type VerificationFailedError = LibSignalErrorCommon & {
   code: ErrorCode.VerificationFailed;
 };
 
-export type SignalClientError =
+export type InvalidSessionError = LibSignalErrorCommon & {
+  code: ErrorCode.InvalidSession;
+};
+
+export type InvalidSenderKeySessionError = LibSignalErrorCommon & {
+  code: ErrorCode.InvalidSenderKeySession;
+  distributionId: string;
+};
+
+export type LibSignalError =
   | GenericError
   | DuplicatedMessageError
   | SealedSenderSelfSendError
   | UntrustedIdentityError
   | InvalidRegistrationIdError
-  | VerificationFailedError;
+  | VerificationFailedError
+  | InvalidSessionError
+  | InvalidSenderKeySessionError;

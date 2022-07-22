@@ -21,11 +21,9 @@ SignalClient.initLogger(
 );
 
 describe('HsmEnclaveClient', () => {
-  const validKey = SignalClient.PublicKey.deserialize(
-    Buffer.from(
-      '0506863bc66d02b40d27b8d49ca7c09e9239236f9d7d25d6fcca5ce13c7064d868',
-      'hex'
-    )
+  const validKey = Buffer.from(
+    '06863bc66d02b40d27b8d49ca7c09e9239236f9d7d25d6fcca5ce13c7064d868',
+    'hex'
   );
 
   it('create client', () => {
@@ -77,8 +75,8 @@ describe('HsmEnclaveClient', () => {
       assert.fail();
     } catch (e) {
       assert.instanceOf(e, Error);
-      assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-      const err = e as SignalClient.SignalClientError;
+      assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+      const err = e as SignalClient.LibSignalError;
       assert.equal(err.operation, 'HsmEnclaveClient_New'); // the Rust entry point
     }
   });
@@ -100,8 +98,8 @@ describe('HsmEnclaveClient', () => {
       assert.fail();
     } catch (e) {
       assert.instanceOf(e, Error);
-      assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-      const err = e as SignalClient.SignalClientError;
+      assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+      const err = e as SignalClient.LibSignalError;
       assert.equal(err.operation, 'HsmEnclaveClient_CompleteHandshake'); // the Rust entry point
     }
   });
@@ -123,8 +121,8 @@ describe('HsmEnclaveClient', () => {
       assert.fail();
     } catch (e) {
       assert.instanceOf(e, Error);
-      assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-      const err = e as SignalClient.SignalClientError;
+      assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+      const err = e as SignalClient.LibSignalError;
       assert.equal(err.operation, 'HsmEnclaveClient_EstablishedSend'); // the Rust entry point
     }
   });
@@ -146,8 +144,8 @@ describe('HsmEnclaveClient', () => {
       assert.fail();
     } catch (e) {
       assert.instanceOf(e, Error);
-      assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-      const err = e as SignalClient.SignalClientError;
+      assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+      const err = e as SignalClient.LibSignalError;
       assert.equal(err.operation, 'HsmEnclaveClient_EstablishedRecv'); // the Rust entry point
     }
   });

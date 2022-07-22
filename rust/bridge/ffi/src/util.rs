@@ -3,14 +3,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use attest::cds2::Error as Cds2Error;
+use attest::hsm_enclave::Error as HsmEnclaveError;
 use device_transfer::Error as DeviceTransferError;
-use hsm_enclave::Error as HsmEnclaveError;
-use libc::{c_char, c_uchar, size_t};
+use libc::c_char;
 use libsignal_bridge::ffi::*;
 use libsignal_protocol::*;
 use signal_crypto::Error as SignalCryptoError;
 use std::ffi::CString;
-use zkgroup::ZkGroupError;
+use zkgroup::ZkGroupDeserializationFailure;
+use zkgroup::ZkGroupVerificationFailure;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -26,15 +28,16 @@ pub enum SignalErrorCode {
 
     ProtobufError = 10,
 
-    InvalidCiphertext = 20,
     LegacyCiphertextVersion = 21,
     UnknownCiphertextVersion = 22,
     UnrecognizedMessageVersion = 23,
+
     InvalidMessage = 30,
     SealedSenderSelfSend = 31,
 
     InvalidKey = 40,
     InvalidSignature = 41,
+    InvalidAttestationData = 42,
 
     FingerprintVersionMismatch = 51,
     FingerprintParsingError = 52,
@@ -45,6 +48,8 @@ pub enum SignalErrorCode {
 
     SessionNotFound = 80,
     InvalidRegistrationId = 81,
+    InvalidSession = 82,
+    InvalidSenderKeySession = 83,
 
     DuplicatedMessage = 90,
 
@@ -57,20 +62,16 @@ impl From<&SignalFfiError> for SignalErrorCode {
     fn from(err: &SignalFfiError) -> Self {
         match err {
             SignalFfiError::NullPointer => SignalErrorCode::NullParameter,
-            SignalFfiError::InvalidType => SignalErrorCode::InvalidType,
 
             SignalFfiError::UnexpectedPanic(_)
-            | SignalFfiError::Signal(SignalProtocolError::InternalError(_))
             | SignalFfiError::DeviceTransfer(DeviceTransferError::InternalError(_))
-            | SignalFfiError::Signal(SignalProtocolError::FfiBindingError(_))
-            | SignalFfiError::Signal(SignalProtocolError::InvalidMacKeyLength(_)) => {
+            | SignalFfiError::Signal(SignalProtocolError::FfiBindingError(_)) => {
                 SignalErrorCode::InternalError
             }
 
             SignalFfiError::InvalidUtf8String => SignalErrorCode::InvalidUtf8String,
 
-            SignalFfiError::Signal(SignalProtocolError::ProtobufEncodingError(_))
-            | SignalFfiError::Signal(SignalProtocolError::ProtobufDecodingError(_)) => {
+            SignalFfiError::Signal(SignalProtocolError::InvalidProtobufEncoding) => {
                 SignalErrorCode::ProtobufError
             }
 
@@ -94,13 +95,19 @@ impl From<&SignalFfiError> for SignalErrorCode {
             SignalFfiError::Signal(SignalProtocolError::NoKeyTypeIdentifier)
             | SignalFfiError::Signal(SignalProtocolError::BadKeyType(_))
             | SignalFfiError::Signal(SignalProtocolError::BadKeyLength(_, _))
+            | SignalFfiError::Signal(SignalProtocolError::InvalidMacKeyLength(_))
             | SignalFfiError::DeviceTransfer(DeviceTransferError::KeyDecodingFailed)
             | SignalFfiError::HsmEnclave(HsmEnclaveError::InvalidPublicKeyError)
             | SignalFfiError::SignalCrypto(SignalCryptoError::InvalidKeySize) => {
                 SignalErrorCode::InvalidKey
             }
 
-            SignalFfiError::Signal(SignalProtocolError::SessionNotFound(_)) => {
+            SignalFfiError::Cds2(Cds2Error::AttestationDataError { .. }) => {
+                SignalErrorCode::InvalidAttestationData
+            }
+
+            SignalFfiError::Signal(SignalProtocolError::SessionNotFound(_))
+            | SignalFfiError::Signal(SignalProtocolError::NoSenderKeyState { .. }) => {
                 SignalErrorCode::SessionNotFound
             }
 
@@ -116,12 +123,6 @@ impl From<&SignalFfiError> for SignalErrorCode {
                 SignalErrorCode::FingerprintVersionMismatch
             }
 
-            SignalFfiError::Signal(SignalProtocolError::CiphertextMessageTooShort(_))
-            | SignalFfiError::Signal(SignalProtocolError::InvalidCiphertext)
-            | SignalFfiError::SignalCrypto(SignalCryptoError::InvalidTag) => {
-                SignalErrorCode::InvalidCiphertext
-            }
-
             SignalFfiError::Signal(SignalProtocolError::UnrecognizedMessageVersion(_))
             | SignalFfiError::Signal(SignalProtocolError::UnknownSealedSenderVersion(_)) => {
                 SignalErrorCode::UnrecognizedMessageVersion
@@ -131,9 +132,14 @@ impl From<&SignalFfiError> for SignalErrorCode {
                 SignalErrorCode::UnknownCiphertextVersion
             }
 
-            SignalFfiError::Signal(SignalProtocolError::InvalidMessage(_))
-            | SignalFfiError::Signal(SignalProtocolError::InvalidProtobufEncoding)
+            SignalFfiError::Signal(SignalProtocolError::InvalidMessage(..))
+            | SignalFfiError::Signal(SignalProtocolError::CiphertextMessageTooShort(_))
             | SignalFfiError::Signal(SignalProtocolError::InvalidSealedSenderMessage(_))
+            | SignalFfiError::SignalCrypto(SignalCryptoError::InvalidTag)
+            | SignalFfiError::Cds2(Cds2Error::DcapError(_))
+            | SignalFfiError::Cds2(Cds2Error::NoiseError(_))
+            | SignalFfiError::Cds2(Cds2Error::NoiseHandshakeError(_))
+            | SignalFfiError::HsmEnclave(HsmEnclaveError::HSMHandshakeError(_))
             | SignalFfiError::HsmEnclave(HsmEnclaveError::HSMCommunicationError(_)) => {
                 SignalErrorCode::InvalidMessage
             }
@@ -148,36 +154,36 @@ impl From<&SignalFfiError> for SignalErrorCode {
             }
 
             SignalFfiError::Signal(SignalProtocolError::InvalidState(_, _))
-            | SignalFfiError::Signal(SignalProtocolError::NoSenderKeyState)
-            | SignalFfiError::Signal(SignalProtocolError::InvalidSessionStructure)
+            | SignalFfiError::Cds2(Cds2Error::InvalidBridgeStateError)
             | SignalFfiError::HsmEnclave(HsmEnclaveError::InvalidBridgeStateError) => {
                 SignalErrorCode::InvalidState
             }
 
+            SignalFfiError::Signal(SignalProtocolError::InvalidSessionStructure(_)) => {
+                SignalErrorCode::InvalidSession
+            }
+
+            SignalFfiError::Signal(SignalProtocolError::InvalidSenderKeySession { .. }) => {
+                SignalErrorCode::InvalidSenderKeySession
+            }
+
             SignalFfiError::Signal(SignalProtocolError::InvalidArgument(_))
             | SignalFfiError::HsmEnclave(HsmEnclaveError::InvalidCodeHashError)
-            | SignalFfiError::SignalCrypto(_)
-            | SignalFfiError::ZkGroup(ZkGroupError::BadArgs) => SignalErrorCode::InvalidArgument,
+            | SignalFfiError::SignalCrypto(_) => SignalErrorCode::InvalidArgument,
 
             SignalFfiError::Signal(SignalProtocolError::ApplicationCallbackError(_, _)) => {
                 SignalErrorCode::CallbackError
             }
 
-            SignalFfiError::ZkGroup(
-                ZkGroupError::DecryptionFailure
-                | ZkGroupError::MacVerificationFailure
-                | ZkGroupError::ProofVerificationFailure
-                | ZkGroupError::SignatureVerificationFailure,
-            ) => SignalErrorCode::VerificationFailure,
+            SignalFfiError::ZkGroupVerificationFailure(ZkGroupVerificationFailure) => {
+                SignalErrorCode::VerificationFailure
+            }
+
+            SignalFfiError::ZkGroupDeserializationFailure(ZkGroupDeserializationFailure) => {
+                SignalErrorCode::InvalidType
+            }
         }
     }
-}
-
-pub(crate) unsafe fn as_slice<'a>(
-    input: *const c_uchar,
-    input_len: size_t,
-) -> Result<&'a [u8], SignalFfiError> {
-    SizedArgTypeInfo::convert_from(input, input_len)
 }
 
 pub(crate) unsafe fn write_cstr_to(

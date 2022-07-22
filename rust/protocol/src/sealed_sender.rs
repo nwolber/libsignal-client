@@ -49,7 +49,8 @@ const REVOKED_SERVER_CERTIFICATE_KEY_IDS: &[u32] = &[0xDEADC357];
 
 impl ServerCertificate {
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        let pb = proto::sealed_sender::ServerCertificate::decode(data)?;
+        let pb = proto::sealed_sender::ServerCertificate::decode(data)
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
         if pb.certificate.is_none() || pb.signature.is_none() {
             return Err(SignalProtocolError::InvalidProtobufEncoding);
@@ -62,7 +63,8 @@ impl ServerCertificate {
             .signature
             .ok_or(SignalProtocolError::InvalidProtobufEncoding)?;
         let certificate_data =
-            proto::sealed_sender::server_certificate::Certificate::decode(certificate.as_ref())?;
+            proto::sealed_sender::server_certificate::Certificate::decode(certificate.as_ref())
+                .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
         let key = PublicKey::try_from(
             &certificate_data
                 .key
@@ -165,7 +167,8 @@ pub struct SenderCertificate {
 
 impl SenderCertificate {
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        let pb = proto::sealed_sender::SenderCertificate::decode(data)?;
+        let pb = proto::sealed_sender::SenderCertificate::decode(data)
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
         let certificate = pb
             .certificate
             .ok_or(SignalProtocolError::InvalidProtobufEncoding)?;
@@ -173,7 +176,8 @@ impl SenderCertificate {
             .signature
             .ok_or(SignalProtocolError::InvalidProtobufEncoding)?;
         let certificate_data =
-            proto::sealed_sender::sender_certificate::Certificate::decode(certificate.as_ref())?;
+            proto::sealed_sender::sender_certificate::Certificate::decode(certificate.as_ref())
+                .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
         let sender_device_id = certificate_data
             .sender_device
@@ -250,19 +254,6 @@ impl SenderCertificate {
             serialized,
             certificate,
             signature,
-        })
-    }
-
-    pub(crate) fn from_protobuf(pb: &proto::sealed_sender::SenderCertificate) -> Result<Self> {
-        let mut bits = vec![];
-        pb.encode(&mut bits)?;
-        Self::deserialize(&bits)
-    }
-
-    pub(crate) fn to_protobuf(&self) -> Result<proto::sealed_sender::SenderCertificate> {
-        Ok(proto::sealed_sender::SenderCertificate {
-            certificate: Some(self.certificate.clone()),
-            signature: Some(self.signature.clone()),
         })
     }
 
@@ -415,7 +406,8 @@ pub struct UnidentifiedSenderMessageContent {
 
 impl UnidentifiedSenderMessageContent {
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        let pb = proto::sealed_sender::unidentified_sender_message::Message::decode(data)?;
+        let pb = proto::sealed_sender::unidentified_sender_message::Message::decode(data)
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
         let msg_type = pb
             .r#type
@@ -434,7 +426,7 @@ impl UnidentifiedSenderMessageContent {
             .unwrap_or(ContentHint::Default);
         let group_id = pb.group_id;
 
-        let sender = SenderCertificate::from_protobuf(&sender)?;
+        let sender = SenderCertificate::deserialize(&sender)?;
 
         let serialized = data.to_vec();
 
@@ -466,7 +458,7 @@ impl UnidentifiedSenderMessageContent {
         let msg = proto::sealed_sender::unidentified_sender_message::Message {
             content: Some(contents.clone()),
             r#type: Some(proto_msg_type.into()),
-            sender_certificate: Some(sender.to_protobuf()?),
+            sender_certificate: Some(sender.serialized()?.to_vec()),
             content_hint: content_hint.to_proto(),
             group_id: group_id.as_ref().and_then(|buf| {
                 if buf.is_empty() {
@@ -547,7 +539,8 @@ impl UnidentifiedSenderMessage {
         match version {
             0 | SEALED_SENDER_V1_VERSION => {
                 // XXX should we really be accepted version == 0 here?
-                let pb = proto::sealed_sender::UnidentifiedSenderMessage::decode(&data[1..])?;
+                let pb = proto::sealed_sender::UnidentifiedSenderMessage::decode(&data[1..])
+                    .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
                 let ephemeral_public = pb
                     .ephemeral_public
@@ -862,7 +855,7 @@ pub async fn sealed_sender_encrypt_from_usmc<R: Rng + CryptoRng>(
     let their_identity = identity_store
         .get_identity(destination, ctx)
         .await?
-        .ok_or_else(|| SignalProtocolError::SessionNotFound(format!("{}", destination)))?;
+        .ok_or_else(|| SignalProtocolError::SessionNotFound(destination.clone()))?;
 
     let ephemeral = KeyPair::generate(rng);
 
@@ -900,7 +893,8 @@ pub async fn sealed_sender_encrypt_from_usmc<R: Rng + CryptoRng>(
         encrypted_static: Some(static_key_ctext),
         encrypted_message: Some(message_data),
     };
-    pb.encode(&mut serialized)?; // appends to buffer
+    pb.encode(&mut serialized)
+        .expect("can always append to Vec");
 
     Ok(serialized)
 }
@@ -1252,10 +1246,7 @@ pub async fn sealed_sender_multi_recipient_encrypt<R: Rng + CryptoRng>(
                     &mut ciphertext,
                 )
             })
-            .map_err(|err| {
-                log::error!("failed to encrypt using AES-GCM-SIV: {}", err);
-                SignalProtocolError::InternalError("failed to encrypt using AES-GCM-SIV")
-            })?;
+            .expect("AES-GCM-SIV encryption should not fail with a just-computed key");
         // AES-GCM-SIV expects the authentication tag to be at the end of the ciphertext
         // when decrypting.
         ciphertext.extend_from_slice(&symmetric_authentication_tag);
@@ -1282,7 +1273,13 @@ pub async fn sealed_sender_multi_recipient_encrypt<R: Rng + CryptoRng>(
         let their_identity = identity_store
             .get_identity(destination, ctx)
             .await?
-            .ok_or_else(|| SignalProtocolError::SessionNotFound(format!("{}", destination)))?;
+            .ok_or_else(|| {
+                log::error!("missing identity key for {}", destination);
+                // Returned as a SessionNotFound error because (a) we don't have an identity error
+                // that includes the address, and (b) re-establishing the session should re-fetch
+                // the identity.
+                SignalProtocolError::SessionNotFound(destination.clone())
+            })?;
 
         let their_registration_id = session.remote_registration_id().map_err(|_| {
             SignalProtocolError::InvalidState(
@@ -1378,7 +1375,8 @@ pub fn sealed_sender_multi_recipient_fan_out(data: &[u8]) -> Result<Vec<Vec<u8>>
         Ok(prefix)
     }
     fn decode_varint(buf: &mut &[u8]) -> Result<u32> {
-        let result: usize = prost::decode_length_delimiter(*buf)?;
+        let result: usize = prost::decode_length_delimiter(*buf)
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
         let _ = advance(buf, prost::length_delimiter_len(result))
             .expect("just decoded that many bytes");
         result
@@ -1449,8 +1447,10 @@ pub async fn sealed_sender_decrypt_to_usmc(
                     unreachable!("just derived these keys; they should be valid");
                 }
                 Err(crypto::DecryptionError::BadCiphertext(msg)) => {
-                    log::error!("failed to decrypt Sealed sender v1 message key: {}", msg);
-                    return Err(SignalProtocolError::InvalidCiphertext);
+                    log::error!("failed to decrypt sealed sender v1 message key: {}", msg);
+                    return Err(SignalProtocolError::InvalidSealedSenderMessage(
+                        "failed to decrypt sealed sender v1 message key".to_owned(),
+                    ));
                 }
             };
 
@@ -1474,10 +1474,12 @@ pub async fn sealed_sender_decrypt_to_usmc(
                 }
                 Err(crypto::DecryptionError::BadCiphertext(msg)) => {
                     log::error!(
-                        "failed to decrypt Sealed sender v1 message contents: {}",
+                        "failed to decrypt sealed sender v1 message contents: {}",
                         msg
                     );
-                    return Err(SignalProtocolError::InvalidCiphertext);
+                    return Err(SignalProtocolError::InvalidSealedSenderMessage(
+                        "failed to decrypt sealed sender v1 message contents".to_owned(),
+                    ));
                 }
             };
 
@@ -1658,10 +1660,10 @@ pub async fn sealed_sender_decrypt(
             .await?
         }
         msg_type => {
-            return Err(SignalProtocolError::InvalidSealedSenderMessage(format!(
-                "Unexpected message type {}",
-                msg_type as i32,
-            )))
+            return Err(SignalProtocolError::InvalidMessage(
+                msg_type,
+                "unexpected message type for sealed_sender_decrypt",
+            ));
         }
     };
 
@@ -1679,7 +1681,7 @@ fn test_lossless_round_trip() -> Result<()> {
 
     // To test a hypothetical addition of a new field:
     //
-    // Step 1: tempororarily add a new field to the .proto.
+    // Step 1: temporarily add a new field to the .proto.
     //
     //    --- a/rust/protocol/src/proto/sealed_sender.proto
     //    +++ b/rust/protocol/src/proto/sealed_sender.proto
@@ -1733,7 +1735,8 @@ fn test_lossless_round_trip() -> Result<()> {
         signature: Some(certificate_signature),
     };
 
-    let sender_certificate = SenderCertificate::from_protobuf(&sender_certificate_data)?;
+    let sender_certificate =
+        SenderCertificate::deserialize(&sender_certificate_data.encode_to_vec())?;
     assert!(sender_certificate.validate(&trust_root.public_key()?, 31336)?);
     Ok(())
 }

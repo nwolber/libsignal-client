@@ -6,13 +6,17 @@
 use std::convert::TryFrom;
 use std::fmt;
 
+use attest::cds2::Error as Cds2Error;
+use attest::hsm_enclave::Error as HsmEnclaveError;
 use device_transfer::Error as DeviceTransferError;
-use hsm_enclave::Error as HsmEnclaveError;
 use libsignal_protocol::*;
 use signal_crypto::Error as SignalCryptoError;
-use zkgroup::ZkGroupError;
+use zkgroup::ZkGroupDeserializationFailure;
+use zkgroup::ZkGroupVerificationFailure;
 
 use crate::support::describe_panic;
+
+use super::NullPointerError;
 
 /// The top-level error type (opaquely) returned to C clients when something goes wrong.
 #[derive(Debug)]
@@ -20,12 +24,13 @@ pub enum SignalFfiError {
     Signal(SignalProtocolError),
     DeviceTransfer(DeviceTransferError),
     HsmEnclave(HsmEnclaveError),
+    Cds2(Cds2Error),
     SignalCrypto(SignalCryptoError),
-    ZkGroup(ZkGroupError),
+    ZkGroupVerificationFailure(ZkGroupVerificationFailure),
+    ZkGroupDeserializationFailure(ZkGroupDeserializationFailure),
     NullPointer,
     InvalidUtf8String,
     UnexpectedPanic(std::boxed::Box<dyn std::any::Any + std::marker::Send>),
-    InvalidType,
 }
 
 impl fmt::Display for SignalFfiError {
@@ -38,12 +43,15 @@ impl fmt::Display for SignalFfiError {
             SignalFfiError::HsmEnclave(e) => {
                 write!(f, "HSM enclave operation failed: {}", e)
             }
+            SignalFfiError::Cds2(e) => {
+                write!(f, "CDS2 operation failed: {}", e)
+            }
             SignalFfiError::SignalCrypto(c) => {
                 write!(f, "Cryptographic operation failed: {}", c)
             }
-            SignalFfiError::ZkGroup(e) => write!(f, "{}", e),
+            SignalFfiError::ZkGroupVerificationFailure(e) => write!(f, "{}", e),
+            SignalFfiError::ZkGroupDeserializationFailure(e) => write!(f, "{}", e),
             SignalFfiError::NullPointer => write!(f, "null pointer"),
-            SignalFfiError::InvalidType => write!(f, "invalid type"),
             SignalFfiError::InvalidUtf8String => write!(f, "invalid UTF8 string"),
             SignalFfiError::UnexpectedPanic(e) => {
                 write!(f, "unexpected panic: {}", describe_panic(e))
@@ -70,15 +78,33 @@ impl From<HsmEnclaveError> for SignalFfiError {
     }
 }
 
+impl From<Cds2Error> for SignalFfiError {
+    fn from(e: Cds2Error) -> SignalFfiError {
+        SignalFfiError::Cds2(e)
+    }
+}
+
 impl From<SignalCryptoError> for SignalFfiError {
     fn from(e: SignalCryptoError) -> SignalFfiError {
         SignalFfiError::SignalCrypto(e)
     }
 }
 
-impl From<ZkGroupError> for SignalFfiError {
-    fn from(e: ZkGroupError) -> SignalFfiError {
-        SignalFfiError::ZkGroup(e)
+impl From<ZkGroupVerificationFailure> for SignalFfiError {
+    fn from(e: ZkGroupVerificationFailure) -> SignalFfiError {
+        SignalFfiError::ZkGroupVerificationFailure(e)
+    }
+}
+
+impl From<ZkGroupDeserializationFailure> for SignalFfiError {
+    fn from(e: ZkGroupDeserializationFailure) -> SignalFfiError {
+        SignalFfiError::ZkGroupDeserializationFailure(e)
+    }
+}
+
+impl From<NullPointerError> for SignalFfiError {
+    fn from(_: NullPointerError) -> SignalFfiError {
+        SignalFfiError::NullPointer
     }
 }
 

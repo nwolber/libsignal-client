@@ -7,6 +7,7 @@ use crate::curve::KeyType;
 
 use displaydoc::Display;
 use thiserror::Error;
+use uuid::Uuid;
 
 use std::panic::UnwindSafe;
 
@@ -19,13 +20,6 @@ pub enum SignalProtocolError {
     /// invalid state for call to {0} to succeed: {1}
     InvalidState(&'static str, String),
 
-    // TODO: avoid duplicating error information in the Display impl and the #[from] or #[source]
-    // attribute if/when we switch to using an error reporting mechanism supporting stack traces:
-    // see https://github.com/yaahc/blog.rust-lang.org/blob/master/posts/inside-rust/2021-05-15-What-the-error-handling-project-group-is-working-towards.md#duplicate-information-issue
-    /// failed to decode protobuf: {0}
-    ProtobufDecodingError(#[from] prost::DecodeError),
-    /// failed to encode protobuf: {0}
-    ProtobufEncodingError(#[from] prost::EncodeError),
     /// protobuf encoding was invalid
     InvalidProtobufEncoding,
 
@@ -63,25 +57,24 @@ pub enum SignalProtocolError {
 
     /// invalid MAC key length <{0}>
     InvalidMacKeyLength(usize),
-    /// invalid ciphertext message
-    InvalidCiphertext,
 
-    /// no sender key state
-    NoSenderKeyState,
+    /// missing sender key state for distribution ID {distribution_id}
+    NoSenderKeyState { distribution_id: Uuid },
 
-    /// session with '{0}' not found
-    SessionNotFound(String),
-    /// invalid session structure
-    InvalidSessionStructure,
+    /// session with {0} not found
+    SessionNotFound(crate::ProtocolAddress),
+    /// invalid session: {0}
+    InvalidSessionStructure(&'static str),
+    /// invalid sender key session with distribution ID {distribution_id}
+    InvalidSenderKeySession { distribution_id: Uuid },
     /// session for {0} has invalid registration ID {1:X}
     InvalidRegistrationId(crate::ProtocolAddress, u32),
 
     /// message with old counter {0} / {1}
     DuplicatedMessage(u32, u32),
-    /// invalid message {0}
-    InvalidMessage(&'static str),
-    /// internal error {0}
-    InternalError(&'static str),
+    /// invalid {0:?} message: {1}
+    InvalidMessage(crate::CiphertextMessageType, &'static str),
+
     /// error while invoking an ffi callback: {0}
     FfiBindingError(String),
     /// error in method call '{0}': {1}
@@ -90,7 +83,7 @@ pub enum SignalProtocolError {
         #[source] Box<dyn std::error::Error + Send + Sync + UnwindSafe + 'static>,
     ),
 
-    /// invalid sealed sender message {0}
+    /// invalid sealed sender message: {0}
     InvalidSealedSenderMessage(String),
     /// unknown sealed sender message version {0}
     UnknownSealedSenderVersion(u8),

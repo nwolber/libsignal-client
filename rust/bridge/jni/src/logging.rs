@@ -83,7 +83,7 @@ impl JniLogger {
         );
         let args = jni_args!((
             level.into() => int,
-            env.new_string("libsignal-client")? => java.lang.String,
+            env.new_string("libsignal")? => java.lang.String,
             env.new_string(message)? => java.lang.String,
         ) -> void);
         let result = env.call_static_method(&self.logger_class, "log", args.sig, &args.args);
@@ -127,7 +127,7 @@ fn set_max_level_from_java_level(max_level: jint) {
     // Keep this in sync with SignalProtocolLogger.java.
     let level = match max_level {
         // The jni crate uses trace! in its own implementation.
-        2 => panic!("invalid log level (must be DEBUG or higher for libsignal-client)"),
+        2 => panic!("invalid log level (must be DEBUG or higher for libsignal)"),
         3 => JavaLogLevel::Debug,
         4 => JavaLogLevel::Info,
         5 => JavaLogLevel::Warn,
@@ -141,7 +141,7 @@ fn set_max_level_from_java_level(max_level: jint) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_org_signal_client_internal_Native_Logger_1Initialize(
+pub unsafe extern "C" fn Java_org_signal_libsignal_internal_Native_Logger_1Initialize(
     env: JNIEnv,
     _class: JClass,
     max_level: jint,
@@ -154,20 +154,20 @@ pub unsafe extern "C" fn Java_org_signal_client_internal_Native_Logger_1Initiali
             Ok(_) => {
                 set_max_level_from_java_level(max_level);
                 log::info!(
-                    "Initializing libsignal-client version:{}",
+                    "Initializing libsignal version:{}",
                     env!("CARGO_PKG_VERSION")
                 );
                 log_panics::init();
             }
             Err(_) => {
-                log::warn!("logging already initialized for libsignal-client; ignoring later call");
+                log::warn!("logging already initialized for libsignal; ignoring later call");
             }
         }
     });
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Java_org_signal_client_internal_Native_Logger_1SetMaxLevel(
+pub unsafe extern "C" fn Java_org_signal_libsignal_internal_Native_Logger_1SetMaxLevel(
     _env: JNIEnv,
     _class: JClass,
     max_level: jint,

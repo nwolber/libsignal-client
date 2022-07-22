@@ -1,5 +1,5 @@
 //
-// Copyright 2020-2021 Signal Messenger, LLC.
+// Copyright 2020-2022 Signal Messenger, LLC.
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
@@ -97,38 +97,6 @@ where
     }
 }
 
-/// Converts "sized" arguments from their FFI form to their Rust form.
-///
-/// This is used for buffers and such passed as a base+length pair. Implementing types are usually
-/// slices; the `ArgType` will usually be a pointer.
-///
-/// `SizedArgTypeInfo` is used to implement the `bridge_fn` macro for slice-typed arguments, but
-/// can also be used outside it.
-///
-/// ```
-/// # use libsignal_bridge::ffi::*;
-/// # struct Foo;
-/// # impl SizedArgTypeInfo for Foo {
-/// #     type ArgType = isize;
-/// #     fn convert_from(foreign: isize, size: usize) -> SignalFfiResult<Self> { Ok(Foo) }
-/// # }
-/// # fn main() -> SignalFfiResult<()> {
-/// #     let ffi_arg = 2;
-/// #     let ffi_arg_len = 3;
-/// let rust_arg = Foo::convert_from(ffi_arg, ffi_arg_len)?;
-/// #     Ok(())
-/// # }
-/// ```
-pub trait SizedArgTypeInfo: Sized {
-    /// The FFI form of the "base" argument (e.g. `*const u8`).
-    ///
-    /// Note that the "length" argument type is not customizable; it is always `usize`
-    /// (`size_t` in C).
-    type ArgType;
-    /// Converts the data in `foreign` to the Rust type.
-    fn convert_from(foreign: Self::ArgType, size: usize) -> SignalFfiResult<Self>;
-}
-
 /// Converts result values from their Rust form to their FFI form.
 ///
 /// `ResultTypeInfo` is used to implement the `bridge_fn` macro, but can also be used outside it.
@@ -155,33 +123,25 @@ pub trait ResultTypeInfo: Sized {
     fn convert_into(self) -> SignalFfiResult<Self::ResultType>;
 }
 
-impl SizedArgTypeInfo for &[u8] {
-    type ArgType = *const c_uchar;
-    fn convert_from(input: Self::ArgType, input_len: usize) -> SignalFfiResult<Self> {
-        if input.is_null() {
-            if input_len != 0 {
-                return Err(SignalFfiError::NullPointer);
-            }
-            // We can't just fall through because slice::from_raw_parts still expects a non-null pointer. Reference a dummy buffer instead.
-            return Ok(&[]);
-        }
-
-        unsafe { Ok(std::slice::from_raw_parts(input, input_len)) }
+impl<'a> ArgTypeInfo<'a> for &'a [u8] {
+    type ArgType = BorrowedSliceOf<c_uchar>;
+    type StoredType = Self::ArgType;
+    fn borrow(foreign: Self::ArgType) -> SignalFfiResult<Self::StoredType> {
+        Ok(foreign)
+    }
+    fn load_from(stored: &'a mut Self::StoredType) -> SignalFfiResult<Self> {
+        unsafe { Ok(stored.as_slice()?) }
     }
 }
 
-impl SizedArgTypeInfo for &mut [u8] {
-    type ArgType = *mut c_uchar;
-    fn convert_from(input: Self::ArgType, input_len: usize) -> SignalFfiResult<Self> {
-        if input.is_null() {
-            if input_len != 0 {
-                return Err(SignalFfiError::NullPointer);
-            }
-            // We can't just fall through because slice::from_raw_parts_mut still expects a non-null pointer. Reference a dummy buffer instead.
-            return Ok(&mut []);
-        }
-
-        unsafe { Ok(std::slice::from_raw_parts_mut(input, input_len)) }
+impl<'a> ArgTypeInfo<'a> for &'a mut [u8] {
+    type ArgType = BorrowedMutableSliceOf<c_uchar>;
+    type StoredType = Self::ArgType;
+    fn borrow(foreign: Self::ArgType) -> SignalFfiResult<Self::StoredType> {
+        Ok(foreign)
+    }
+    fn load_from(stored: &'a mut Self::StoredType) -> SignalFfiResult<Self> {
+        unsafe { Ok(stored.as_slice_mut()?) }
     }
 }
 
@@ -304,7 +264,14 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, SignalProtocolError> {
     }
 }
 
-impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, hsm_enclave::Error> {
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::hsm_enclave::Error> {
+    type ResultType = T::ResultType;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        T::convert_into(self?)
+    }
+}
+
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::cds2::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
         T::convert_into(self?)
@@ -325,7 +292,14 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, signal_crypto::Error> {
     }
 }
 
-impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupError> {
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupVerificationFailure> {
+    type ResultType = T::ResultType;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        T::convert_into(self?)
+    }
+}
+
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupDeserializationFailure> {
     type ResultType = T::ResultType;
     fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
         T::convert_into(self?)
@@ -389,6 +363,20 @@ impl ResultTypeInfo for crate::protocol::Timestamp {
     }
 }
 
+impl SimpleArgTypeInfo for crate::zkgroup::Timestamp {
+    type ArgType = u64;
+    fn convert_from(foreign: Self::ArgType) -> SignalFfiResult<Self> {
+        Ok(Self::from_seconds(foreign))
+    }
+}
+
+impl ResultTypeInfo for crate::zkgroup::Timestamp {
+    type ResultType = u64;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        Ok(self.as_seconds())
+    }
+}
+
 /// A marker for Rust objects exposed as opaque pointers.
 ///
 /// When we do this, we hand the lifetime over to the app. Since we don't know how long the object
@@ -422,29 +410,31 @@ impl<T: BridgeHandle> SimpleArgTypeInfo for &mut T {
     }
 }
 
-impl<T: BridgeHandle> SizedArgTypeInfo for &[&T] {
-    type ArgType = *const *const T;
-    fn convert_from(input: Self::ArgType, input_len: usize) -> SignalFfiResult<Self> {
-        if input.is_null() {
-            if input_len != 0 {
-                return Err(SignalFfiError::NullPointer);
-            }
-            // We can't just fall through because slice::from_raw_parts still expects a non-null pointer. Reference a dummy buffer instead.
-            return Ok(&[]);
-        }
-
-        let slice_of_pointers = unsafe { std::slice::from_raw_parts(input, input_len) };
+impl<'a, T: BridgeHandle> ArgTypeInfo<'a> for &'a [&'a T] {
+    type ArgType = BorrowedSliceOf<*const T>;
+    type StoredType = Self::ArgType;
+    fn borrow(foreign: Self::ArgType) -> SignalFfiResult<Self::StoredType> {
+        Ok(foreign)
+    }
+    fn load_from(input: &'a mut Self::ArgType) -> SignalFfiResult<Self> {
+        let slice_of_pointers = unsafe { input.as_slice() }?;
 
         if slice_of_pointers.contains(&std::ptr::null()) {
             return Err(SignalFfiError::NullPointer);
         }
 
-        let base_ptr_for_slice_of_refs = input as *const &T;
+        if input.base.is_null() {
+            // Early-exit  so that we don't construct a slice with a NULL base later.
+            // Note that we already checked that the length is 0 by using slice_of_pointers.
+            return Ok(&[]);
+        }
+
+        let base_ptr_for_slice_of_refs = input.base as *const &T;
 
         unsafe {
             Ok(std::slice::from_raw_parts(
                 base_ptr_for_slice_of_refs,
-                input_len,
+                input.length,
             ))
         }
     }
@@ -475,8 +465,12 @@ where
 
     fn convert_from(foreign: Self::ArgType) -> SignalFfiResult<Self> {
         let array = unsafe { foreign.as_ref() }.ok_or(SignalFfiError::NullPointer)?;
-        let result: T =
-            bincode::deserialize(array.as_ref()).map_err(|_| SignalFfiError::InvalidType)?;
+        let result: T = bincode::deserialize(array.as_ref()).unwrap_or_else(|_| {
+            panic!(
+                "{} should have been validated on creation",
+                std::any::type_name::<T>()
+            )
+        });
         Ok(Serialized::from(result))
     }
 }
@@ -553,9 +547,6 @@ trivial!(bool);
 /// behavior for references is to pass them through as pointers; the default behavior for
 /// `&mut dyn Foo` is to assume there's a struct called `ffi::FfiFooStruct` and produce a pointer
 /// to that.
-///
-/// Types that implement [`SizedArgTypeInfo`] should only include their base type here.
-/// (For example, `(&[u8]) => (*const libc::c_uchar);`.)
 macro_rules! ffi_arg_type {
     (u8) => (u8);
     (u32) => (u32);
@@ -563,8 +554,8 @@ macro_rules! ffi_arg_type {
     (Option<u32>) => (u32);
     (usize) => (libc::size_t);
     (bool) => (bool);
-    (&[u8]) => (*const libc::c_uchar);
-    (&mut [u8]) => (*mut libc::c_uchar);
+    (&[u8]) => (ffi::BorrowedSliceOf<libc::c_uchar>);
+    (&mut [u8]) => (ffi::BorrowedMutableSliceOf<libc::c_uchar>);
     (String) => (*const libc::c_char);
     (Option<String>) => (*const libc::c_char);
     (Option<&str>) => (*const libc::c_char);
@@ -572,7 +563,7 @@ macro_rules! ffi_arg_type {
     (Timestamp) => (u64);
     (Uuid) => (*const [u8; 16]);
     (&[u8; $len:expr]) => (*const [u8; $len]);
-    (&[& $typ:ty]) => (*const *const $typ);
+    (&[& $typ:ty]) => (ffi::BorrowedSliceOf<*const $typ>);
     (&mut dyn $typ:ty) => (*const paste!(ffi::[<Ffi $typ Struct>]));
     (& $typ:ty) => (*const $typ);
     (&mut $typ:ty) => (*mut $typ);

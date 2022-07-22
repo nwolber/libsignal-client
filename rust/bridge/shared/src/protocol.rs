@@ -256,11 +256,6 @@ fn SignalMessage_Deserialize(data: &[u8]) -> Result<SignalMessage> {
     SignalMessage::try_from(data)
 }
 
-#[bridge_fn_buffer(ffi = false, node = false)]
-fn SignalMessage_GetSenderRatchetKey(m: &SignalMessage) -> Vec<u8> {
-    m.sender_ratchet_key().serialize().into_vec()
-}
-
 bridge_get_buffer!(SignalMessage::body -> &[u8], ffi = "message_get_body");
 bridge_get_buffer!(SignalMessage::serialized -> &[u8], ffi = "message_get_serialized");
 bridge_get!(SignalMessage::counter -> u32, ffi = "message_get_counter");
@@ -303,8 +298,8 @@ fn SignalMessage_VerifyMac(
     )
 }
 
-#[bridge_fn(ffi = "message_get_sender_ratchet_key", jni = false, node = false)]
-fn Message_GetSenderRatchetKey(m: &SignalMessage) -> PublicKey {
+#[bridge_fn(ffi = "message_get_sender_ratchet_key", node = false)]
+fn SignalMessage_GetSenderRatchetKey(m: &SignalMessage) -> PublicKey {
     *m.sender_ratchet_key()
 }
 
@@ -329,17 +324,17 @@ fn PreKeySignalMessage_New(
     )
 }
 
-#[bridge_fn(jni = false, node = false)]
+#[bridge_fn(node = false)]
 fn PreKeySignalMessage_GetBaseKey(m: &PreKeySignalMessage) -> PublicKey {
     *m.base_key()
 }
 
-#[bridge_fn(jni = false, node = false)]
+#[bridge_fn(node = false)]
 fn PreKeySignalMessage_GetIdentityKey(m: &PreKeySignalMessage) -> PublicKey {
     *m.identity_key().public_key()
 }
 
-#[bridge_fn(jni = false, node = false)]
+#[bridge_fn(node = false)]
 fn PreKeySignalMessage_GetSignalMessage(m: &PreKeySignalMessage) -> SignalMessage {
     m.message().clone()
 }
@@ -349,25 +344,6 @@ bridge_get_buffer!(
     PreKeySignalMessage::serialized as Serialize -> &[u8],
     jni = "PreKeySignalMessage_1GetSerialized"
 );
-
-#[bridge_fn_buffer(ffi = false, jni = "PreKeySignalMessage_1GetBaseKey", node = false)]
-fn PreKeySignalMessage_GetBaseKeySerialized(m: &PreKeySignalMessage) -> Vec<u8> {
-    m.base_key().serialize().into_vec()
-}
-
-#[bridge_fn_buffer(ffi = false, jni = "PreKeySignalMessage_1GetIdentityKey", node = false)]
-fn PreKeySignalMessage_GetIdentityKeySerialized(m: &PreKeySignalMessage) -> Vec<u8> {
-    m.identity_key().serialize().into_vec()
-}
-
-#[bridge_fn_buffer(
-    ffi = false,
-    jni = "PreKeySignalMessage_1GetSignalMessage",
-    node = false
-)]
-fn PreKeySignalMessage_GetSignalMessageSerialized(m: &PreKeySignalMessage) -> &[u8] {
-    m.message().serialized()
-}
 
 bridge_get!(PreKeySignalMessage::registration_id -> u32);
 bridge_get!(PreKeySignalMessage::signed_pre_key_id -> u32);
@@ -414,17 +390,6 @@ fn SenderKeyMessage_VerifySignature(skm: &SenderKeyMessage, pubkey: &PublicKey) 
 bridge_deserialize!(SenderKeyDistributionMessage::try_from);
 bridge_get_buffer!(SenderKeyDistributionMessage::chain_key -> &[u8]);
 
-#[bridge_fn_buffer(
-    ffi = false,
-    jni = "SenderKeyDistributionMessage_1GetSignatureKey",
-    node = false
-)]
-fn SenderKeyDistributionMessage_GetSignatureKeySerialized(
-    m: &SenderKeyDistributionMessage,
-) -> Result<Vec<u8>> {
-    Ok(m.signing_key()?.serialize().into_vec())
-}
-
 bridge_get_buffer!(
     SenderKeyDistributionMessage::serialized as Serialize -> &[u8],
     jni = "SenderKeyDistributionMessage_1GetSerialized"
@@ -453,7 +418,7 @@ fn SenderKeyDistributionMessage_New(
     )
 }
 
-#[bridge_fn(jni = false, node = false)]
+#[bridge_fn(node = false)]
 fn SenderKeyDistributionMessage_GetSignatureKey(
     m: &SenderKeyDistributionMessage,
 ) -> Result<PublicKey> {
@@ -608,11 +573,6 @@ bridge_get_buffer!(
     SenderKeyRecord::serialize as Serialize -> Vec<u8>,
     jni = "SenderKeyRecord_1GetSerialized"
 );
-
-#[bridge_fn(ffi = "sender_key_record_new_fresh")]
-fn SenderKeyRecord_New() -> SenderKeyRecord {
-    SenderKeyRecord::new_empty()
-}
 
 bridge_deserialize!(ServerCertificate::deserialize);
 bridge_get_buffer!(ServerCertificate::serialized -> &[u8]);
@@ -853,16 +813,7 @@ fn SessionRecord_CurrentRatchetKeyMatches(s: &SessionRecord, key: &PublicKey) ->
     s.current_ratchet_key_matches(key)
 }
 
-#[bridge_fn_void]
-fn SessionRecord_SetNeedsPniSignature(
-    s: &mut SessionRecord,
-    needs_pni_signature: bool,
-) -> Result<()> {
-    s.set_needs_pni_signature(needs_pni_signature)
-}
-
 bridge_get!(SessionRecord::has_current_session_state as HasCurrentState -> bool, jni = false);
-bridge_get!(SessionRecord::needs_pni_signature as NeedsPniSignature -> bool);
 
 bridge_deserialize!(SessionRecord::deserialize);
 bridge_get_buffer!(SessionRecord::serialize as Serialize -> Vec<u8>);
@@ -902,8 +853,9 @@ fn SessionRecord_GetReceiverChainKeyValue(
     session_state: &SessionRecord,
     key: &PublicKey,
 ) -> Result<Option<Vec<u8>>> {
-    let chain_key = session_state.get_receiver_chain_key(key)?;
-    Ok(chain_key.map(|ck| ck.key().to_vec()))
+    Ok(session_state
+        .get_receiver_chain_key_bytes(key)?
+        .map(Vec::from))
 }
 
 #[bridge_fn(ffi = false, node = false)]
@@ -1114,8 +1066,9 @@ fn SealedSender_MultiRecipientMessageForSingleRecipient(
     encoded_multi_recipient_message: &[u8],
 ) -> Result<Vec<u8>> {
     let messages = sealed_sender_multi_recipient_fan_out(encoded_multi_recipient_message)?;
-    let [single_message] = <[_; 1]>::try_from(messages)
-        .map_err(|_| SignalProtocolError::InvalidMessage("encoded for more than one recipient"))?;
+    let [single_message] = <[_; 1]>::try_from(messages).map_err(|_| {
+        SignalProtocolError::InvalidArgument("encoded for more than one recipient".to_owned())
+    })?;
     Ok(single_message)
 }
 

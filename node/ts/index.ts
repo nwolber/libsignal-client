@@ -13,26 +13,24 @@ export * from './Address';
 
 import * as Native from '../Native';
 
-export const { initLogger, LogLevel } = Native;
-
 Native.registerErrors(Errors);
 
 // These enums must be kept in sync with their Rust counterparts.
 
-export const enum CiphertextMessageType {
+export enum CiphertextMessageType {
   Whisper = 2,
   PreKey = 3,
   SenderKey = 7,
   Plaintext = 8,
 }
 
-export const enum Direction {
+export enum Direction {
   Sending,
   Receiving,
 }
 
 // This enum must be kept in sync with sealed_sender.proto.
-export const enum ContentHint {
+export enum ContentHint {
   Default = 0,
   Resendable = 1,
   Implicit = 2,
@@ -588,25 +586,6 @@ export class SessionRecord {
     return Native.SessionRecord_HasCurrentState(this);
   }
 
-  /**
-   * Returns true if this session was marked as needing a PNI signature and has not received a
-   * reply.
-   *
-   * Precondition: `this.hasCurrentState()`
-   */
-  needsPniSignature(): boolean {
-    return Native.SessionRecord_NeedsPniSignature(this);
-  }
-
-  /**
-   * Marks whether this session needs a PNI signature included in outgoing messages.
-   *
-   * Precondition: `this.hasCurrentState()`
-   */
-  setNeedsPniSignature(needsPniSignature: boolean): void {
-    Native.SessionRecord_SetNeedsPniSignature(this, needsPniSignature);
-  }
-
   currentRatchetKeyMatches(key: PublicKey): boolean {
     return Native.SessionRecord_CurrentRatchetKeyMatches(this, key);
   }
@@ -671,10 +650,6 @@ export class SenderKeyRecord {
 
   private constructor(nativeHandle: Native.SenderKeyRecord) {
     this._nativeHandle = nativeHandle;
-  }
-
-  static new(): SenderKeyRecord {
-    return new SenderKeyRecord(Native.SenderKeyRecord_New());
   }
 
   static deserialize(buffer: Buffer): SenderKeyRecord {
@@ -1463,6 +1438,46 @@ export async function sealedSenderDecryptToUsmc(
   return UnidentifiedSenderMessageContent._fromNativeHandle(usmc);
 }
 
+export class Cds2Client {
+  readonly _nativeHandle: Native.Cds2ClientState;
+
+  private constructor(nativeHandle: Native.Cds2ClientState) {
+    this._nativeHandle = nativeHandle;
+  }
+
+  static new_NOT_FOR_PRODUCTION(
+    mrenclave: Buffer,
+    trustedCaCert: Buffer,
+    attestationMsg: Buffer,
+    earliestValidTimestamp: Date
+  ): Cds2Client {
+    return new Cds2Client(
+      Native.Cds2ClientState_New(
+        mrenclave,
+        trustedCaCert,
+        attestationMsg,
+        earliestValidTimestamp.getTime()
+      )
+    );
+  }
+
+  initialRequest(): Buffer {
+    return Native.Cds2ClientState_InitialRequest(this);
+  }
+
+  completeHandshake(buffer: Buffer): void {
+    return Native.Cds2ClientState_CompleteHandshake(this, buffer);
+  }
+
+  establishedSend(buffer: Buffer): Buffer {
+    return Native.Cds2ClientState_EstablishedSend(this, buffer);
+  }
+
+  establishedRecv(buffer: Buffer): Buffer {
+    return Native.Cds2ClientState_EstablishedRecv(this, buffer);
+  }
+}
+
 export class HsmEnclaveClient {
   readonly _nativeHandle: Native.HsmEnclaveClient;
 
@@ -1470,7 +1485,7 @@ export class HsmEnclaveClient {
     this._nativeHandle = nativeHandle;
   }
 
-  static new(public_key: PublicKey, code_hashes: Buffer[]): HsmEnclaveClient {
+  static new(public_key: Buffer, code_hashes: Buffer[]): HsmEnclaveClient {
     code_hashes.forEach(hash => {
       if (hash.length != 32) {
         throw new Error('code hash length must be 32');
@@ -1479,7 +1494,7 @@ export class HsmEnclaveClient {
     const concat_hashes = Buffer.concat(code_hashes);
 
     return new HsmEnclaveClient(
-      Native.HsmEnclaveClient_New(public_key.getPublicKeyBytes(), concat_hashes)
+      Native.HsmEnclaveClient_New(public_key, concat_hashes)
     );
   }
 
@@ -1498,4 +1513,76 @@ export class HsmEnclaveClient {
   establishedRecv(buffer: Buffer): Buffer {
     return Native.HsmEnclaveClient_EstablishedRecv(this, buffer);
   }
+}
+
+export enum LogLevel {
+  Error = 1,
+  Warn,
+  Info,
+  Debug,
+  Trace,
+}
+
+export function initLogger(
+  maxLevel: LogLevel,
+  callback: (
+    level: LogLevel,
+    target: string,
+    file: string | null,
+    line: number | null,
+    message: string
+  ) => void
+): void {
+  let nativeMaxLevel: Native.LogLevel;
+  switch (maxLevel) {
+    case LogLevel.Error:
+      nativeMaxLevel = Native.LogLevel.Error;
+      break;
+    case LogLevel.Warn:
+      nativeMaxLevel = Native.LogLevel.Warn;
+      break;
+    case LogLevel.Info:
+      nativeMaxLevel = Native.LogLevel.Info;
+      break;
+    case LogLevel.Debug:
+      nativeMaxLevel = Native.LogLevel.Debug;
+      break;
+    case LogLevel.Trace:
+      nativeMaxLevel = Native.LogLevel.Trace;
+      break;
+  }
+  Native.initLogger(
+    nativeMaxLevel,
+    (nativeLevel, target, file, line, message) => {
+      let level: LogLevel;
+      switch (nativeLevel) {
+        case Native.LogLevel.Error:
+          level = LogLevel.Error;
+          break;
+        case Native.LogLevel.Warn:
+          level = LogLevel.Warn;
+          break;
+        case Native.LogLevel.Info:
+          level = LogLevel.Info;
+          break;
+        case Native.LogLevel.Debug:
+          level = LogLevel.Debug;
+          break;
+        case Native.LogLevel.Trace:
+          level = LogLevel.Trace;
+          break;
+        default:
+          callback(
+            LogLevel.Warn,
+            'signal-client',
+            'index.ts',
+            0,
+            'unknown log level ' + nativeLevel + '; treating as error'
+          );
+          level = LogLevel.Error;
+          break;
+      }
+      callback(level, target, file, line, message);
+    }
+  );
 }

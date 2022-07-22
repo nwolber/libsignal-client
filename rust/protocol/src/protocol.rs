@@ -84,17 +84,19 @@ impl SignalMessage {
             previous_counter: Some(previous_counter),
             ciphertext: Some(Vec::<u8>::from(ciphertext)),
         };
-        let mut serialized = vec![0u8; 1 + message.encoded_len() + Self::MAC_LENGTH];
-        serialized[0] = ((message_version & 0xF) << 4) | CIPHERTEXT_MESSAGE_CURRENT_VERSION;
-        message.encode(&mut &mut serialized[1..message.encoded_len() + 1])?;
-        let msg_len_for_mac = serialized.len() - Self::MAC_LENGTH;
+        let mut serialized = Vec::new();
+        serialized.reserve(1 + message.encoded_len() + Self::MAC_LENGTH);
+        serialized.push(((message_version & 0xF) << 4) | CIPHERTEXT_MESSAGE_CURRENT_VERSION);
+        message
+            .encode(&mut serialized)
+            .expect("can always append to a buffer");
         let mac = Self::compute_mac(
             sender_identity_key,
             receiver_identity_key,
             mac_key,
-            &serialized[..msg_len_for_mac],
+            &serialized,
         )?;
-        serialized[msg_len_for_mac..].copy_from_slice(&mac);
+        serialized.extend_from_slice(&mac);
         let serialized = serialized.into_boxed_slice();
         Ok(Self {
             message_version,
@@ -203,7 +205,8 @@ impl TryFrom<&[u8]> for SignalMessage {
         }
 
         let proto_structure =
-            proto::wire::SignalMessage::decode(&value[1..value.len() - SignalMessage::MAC_LENGTH])?;
+            proto::wire::SignalMessage::decode(&value[1..value.len() - SignalMessage::MAC_LENGTH])
+                .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
         let sender_ratchet_key = proto_structure
             .ratchet_key
@@ -259,9 +262,12 @@ impl PreKeySignalMessage {
             identity_key: Some(identity_key.serialize().into_vec()),
             message: Some(Vec::from(message.as_ref())),
         };
-        let mut serialized = vec![0u8; 1 + proto_message.encoded_len()];
-        serialized[0] = ((message_version & 0xF) << 4) | CIPHERTEXT_MESSAGE_CURRENT_VERSION;
-        proto_message.encode(&mut &mut serialized[1..])?;
+        let mut serialized = Vec::new();
+        serialized.reserve(1 + proto_message.encoded_len());
+        serialized.push(((message_version & 0xF) << 4) | CIPHERTEXT_MESSAGE_CURRENT_VERSION);
+        proto_message
+            .encode(&mut serialized)
+            .expect("can always append to a Vec");
         Ok(Self {
             message_version,
             registration_id,
@@ -341,7 +347,8 @@ impl TryFrom<&[u8]> for PreKeySignalMessage {
             ));
         }
 
-        let proto_structure = proto::wire::PreKeySignalMessage::decode(&value[1..])?;
+        let proto_structure = proto::wire::PreKeySignalMessage::decode(&value[1..])
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
         let base_key = proto_structure
             .base_key
@@ -400,12 +407,14 @@ impl SenderKeyMessage {
             ciphertext: Some(ciphertext.to_vec()),
         };
         let proto_message_len = proto_message.encoded_len();
-        let mut serialized = vec![0u8; 1 + proto_message_len + Self::SIGNATURE_LEN];
-        serialized[0] = ((message_version & 0xF) << 4) | SENDERKEY_MESSAGE_CURRENT_VERSION;
-        proto_message.encode(&mut &mut serialized[1..1 + proto_message_len])?;
-        let signature =
-            signature_key.calculate_signature(&serialized[..1 + proto_message_len], csprng)?;
-        serialized[1 + proto_message_len..].copy_from_slice(&signature[..]);
+        let mut serialized = Vec::new();
+        serialized.reserve(1 + proto_message_len + Self::SIGNATURE_LEN);
+        serialized.push(((message_version & 0xF) << 4) | SENDERKEY_MESSAGE_CURRENT_VERSION);
+        proto_message
+            .encode(&mut serialized)
+            .expect("can always append to a buffer");
+        let signature = signature_key.calculate_signature(&serialized, csprng)?;
+        serialized.extend_from_slice(&signature[..]);
         Ok(Self {
             message_version: SENDERKEY_MESSAGE_CURRENT_VERSION,
             distribution_id,
@@ -481,7 +490,8 @@ impl TryFrom<&[u8]> for SenderKeyMessage {
             ));
         }
         let proto_structure =
-            proto::wire::SenderKeyMessage::decode(&value[1..value.len() - Self::SIGNATURE_LEN])?;
+            proto::wire::SenderKeyMessage::decode(&value[1..value.len() - Self::SIGNATURE_LEN])
+                .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
         let distribution_id = proto_structure
             .distribution_uuid
@@ -536,9 +546,12 @@ impl SenderKeyDistributionMessage {
             chain_key: Some(chain_key.clone()),
             signing_key: Some(signing_key.serialize().to_vec()),
         };
-        let mut serialized = vec![0u8; 1 + proto_message.encoded_len()];
-        serialized[0] = ((message_version & 0xF) << 4) | SENDERKEY_MESSAGE_CURRENT_VERSION;
-        proto_message.encode(&mut &mut serialized[1..])?;
+        let mut serialized = Vec::new();
+        serialized.reserve(1 + proto_message.encoded_len());
+        serialized.push(((message_version & 0xF) << 4) | SENDERKEY_MESSAGE_CURRENT_VERSION);
+        proto_message
+            .encode(&mut serialized)
+            .expect("can always append to a buffer");
 
         Ok(Self {
             message_version,
@@ -615,7 +628,8 @@ impl TryFrom<&[u8]> for SenderKeyDistributionMessage {
             ));
         }
 
-        let proto_structure = proto::wire::SenderKeyDistributionMessage::decode(&value[1..])?;
+        let proto_structure = proto::wire::SenderKeyDistributionMessage::decode(&value[1..])
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
 
         let distribution_id = proto_structure
             .distribution_uuid
@@ -753,8 +767,7 @@ impl DecryptionErrorMessage {
             ratchet_key: ratchet_key.map(|k| k.serialize().into()),
             device_id: Some(original_sender_device_id),
         };
-        let mut serialized = Vec::new();
-        proto_message.encode(&mut serialized)?;
+        let serialized = proto_message.encode_to_vec();
 
         Ok(Self {
             ratchet_key,
@@ -789,7 +802,8 @@ impl TryFrom<&[u8]> for DecryptionErrorMessage {
     type Error = SignalProtocolError;
 
     fn try_from(value: &[u8]) -> Result<Self> {
-        let proto_structure = proto::service::DecryptionErrorMessage::decode(value)?;
+        let proto_structure = proto::service::DecryptionErrorMessage::decode(value)
+            .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
         let timestamp = proto_structure
             .timestamp
             .ok_or(SignalProtocolError::InvalidProtobufEncoding)?;
@@ -814,7 +828,8 @@ pub fn extract_decryption_error_message_from_serialized_content(
     if bytes.last() != Some(&PlaintextContent::PADDING_BOUNDARY_BYTE) {
         return Err(SignalProtocolError::InvalidProtobufEncoding);
     }
-    let content = proto::service::Content::decode(bytes.split_last().expect("checked above").1)?;
+    let content = proto::service::Content::decode(bytes.split_last().expect("checked above").1)
+        .map_err(|_| SignalProtocolError::InvalidProtobufEncoding)?;
     content
         .decryption_error_message
         .as_deref()

@@ -526,13 +526,6 @@ describe('SignalClient', () => {
     );
     assert.deepEqual(spkrFromBytes, spkr);
   });
-  it('SenderKeyRecord', () => {
-    const skr = SignalClient.SenderKeyRecord.new();
-    const skrFromBytes = SignalClient.SenderKeyRecord.deserialize(
-      skr.serialize()
-    );
-    assert.deepEqual(skr, skrFromBytes);
-  });
   it('SignalMessage and PreKeySignalMessage', () => {
     const messageVersion = 3;
     const macKey = Buffer.alloc(32, 0xab);
@@ -707,28 +700,25 @@ describe('SignalClient', () => {
     assert.deepEqual(aDPlaintext, bMessage);
 
     const session = await bSess.getSession(aAddress);
+    assert(session !== null);
 
-    if (session != null) {
-      assert(session.serialize().length > 0);
-      assert.deepEqual(session.localRegistrationId(), 5);
-      assert.deepEqual(session.remoteRegistrationId(), 5);
-      assert(session.hasCurrentState());
-      assert(
-        !session.currentRatchetKeyMatches(
-          SignalClient.PrivateKey.generate().getPublicKey()
-        )
-      );
+    assert(session.serialize().length > 0);
+    assert.deepEqual(session.localRegistrationId(), 5);
+    assert.deepEqual(session.remoteRegistrationId(), 5);
+    assert(session.hasCurrentState());
+    assert(
+      !session.currentRatchetKeyMatches(
+        SignalClient.PrivateKey.generate().getPublicKey()
+      )
+    );
 
-      session.archiveCurrentState();
-      assert(!session.hasCurrentState());
-      assert(
-        !session.currentRatchetKeyMatches(
-          SignalClient.PrivateKey.generate().getPublicKey()
-        )
-      );
-    } else {
-      assert.fail('no session found');
-    }
+    session.archiveCurrentState();
+    assert(!session.hasCurrentState());
+    assert(
+      !session.currentRatchetKeyMatches(
+        SignalClient.PrivateKey.generate().getPublicKey()
+      )
+    );
   });
   it('handles duplicated messages', async () => {
     const aKeys = new InMemoryIdentityKeyStore();
@@ -828,8 +818,8 @@ describe('SignalClient', () => {
       assert.fail();
     } catch (e) {
       assert.instanceOf(e, Error);
-      assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-      const err = e as SignalClient.SignalClientError;
+      assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+      const err = e as SignalClient.LibSignalError;
       assert.equal(err.name, 'DuplicatedMessage');
       assert.equal(err.code, SignalClient.ErrorCode.DuplicatedMessage);
       assert.equal(err.operation, 'SessionCipher_DecryptPreKeySignalMessage'); // the Rust entry point
@@ -871,79 +861,14 @@ describe('SignalClient', () => {
       assert.fail();
     } catch (e) {
       assert.instanceOf(e, Error);
-      assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-      const err = e as SignalClient.SignalClientError;
+      assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+      const err = e as SignalClient.LibSignalError;
       assert.equal(err.name, 'DuplicatedMessage');
       assert.equal(err.code, SignalClient.ErrorCode.DuplicatedMessage);
       assert.equal(err.operation, 'SessionCipher_DecryptSignalMessage'); // the Rust entry point
       assert.exists(err.stack); // Make sure we're still getting the benefits of Error.
     }
   });
-
-  it('handles the needsPniSignature flag', async () => {
-    const aKeys = new InMemoryIdentityKeyStore();
-    const bKeys = new InMemoryIdentityKeyStore();
-
-    const aSess = new InMemorySessionStore();
-
-    const bPreK = new InMemoryPreKeyStore();
-    const bSPreK = new InMemorySignedPreKeyStore();
-
-    const bPreKey = SignalClient.PrivateKey.generate();
-    const bSPreKey = SignalClient.PrivateKey.generate();
-
-    const bIdentityKey = await bKeys.getIdentityKey();
-    const bSignedPreKeySig = bIdentityKey.sign(
-      bSPreKey.getPublicKey().serialize()
-    );
-
-    const bAddress = SignalClient.ProtocolAddress.new('+19192222222', 1);
-
-    const bRegistrationId = await bKeys.getLocalRegistrationId();
-    const bPreKeyId = 31337;
-    const bSignedPreKeyId = 22;
-
-    const bPreKeyBundle = SignalClient.PreKeyBundle.new(
-      bRegistrationId,
-      bAddress.deviceId(),
-      bPreKeyId,
-      bPreKey.getPublicKey(),
-      bSignedPreKeyId,
-      bSPreKey.getPublicKey(),
-      bSignedPreKeySig,
-      bIdentityKey.getPublicKey()
-    );
-
-    const bPreKeyRecord = SignalClient.PreKeyRecord.new(
-      bPreKeyId,
-      bPreKey.getPublicKey(),
-      bPreKey
-    );
-    bPreK.savePreKey(bPreKeyId, bPreKeyRecord);
-
-    const bSPreKeyRecord = SignalClient.SignedPreKeyRecord.new(
-      bSignedPreKeyId,
-      42, // timestamp
-      bSPreKey.getPublicKey(),
-      bSPreKey,
-      bSignedPreKeySig
-    );
-    bSPreK.saveSignedPreKey(bSignedPreKeyId, bSPreKeyRecord);
-
-    await SignalClient.processPreKeyBundle(
-      bPreKeyBundle,
-      bAddress,
-      aSess,
-      aKeys
-    );
-
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const session = (await aSess.getSession(bAddress))!;
-    assert(!session.needsPniSignature());
-    session.setNeedsPniSignature(true);
-    assert(session.needsPniSignature());
-  });
-
   describe('SealedSender', () => {
     it('can encrypt/decrypt 1-1 messages', async () => {
       const aKeys = new InMemoryIdentityKeyStore();
@@ -1057,13 +982,10 @@ describe('SignalClient', () => {
       );
 
       assert(bPlaintext != null);
-
-      if (bPlaintext != null) {
-        assert.deepEqual(bPlaintext.message(), aPlaintext);
-        assert.deepEqual(bPlaintext.senderE164(), aE164);
-        assert.deepEqual(bPlaintext.senderUuid(), aUuid);
-        assert.deepEqual(bPlaintext.deviceId(), aDeviceId);
-      }
+      assert.deepEqual(bPlaintext.message(), aPlaintext);
+      assert.deepEqual(bPlaintext.senderE164(), aE164);
+      assert.deepEqual(bPlaintext.senderUuid(), aUuid);
+      assert.deepEqual(bPlaintext.deviceId(), aDeviceId);
 
       const innerMessage = await SignalClient.signalEncrypt(
         aPlaintext,
@@ -1209,8 +1131,8 @@ describe('SignalClient', () => {
         assert.fail();
       } catch (e) {
         assert.instanceOf(e, Error);
-        assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-        const err = e as SignalClient.SignalClientError;
+        assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+        const err = e as SignalClient.LibSignalError;
         assert.equal(err.name, 'SealedSenderSelfSend');
         assert.equal(err.code, SignalClient.ErrorCode.SealedSenderSelfSend);
         assert.equal(err.operation, 'SealedSender_DecryptMessage'); // the Rust entry point
@@ -1470,8 +1392,8 @@ describe('SignalClient', () => {
         assert.fail('should have thrown');
       } catch (e) {
         assert.instanceOf(e, Error);
-        assert.instanceOf(e, SignalClient.SignalClientErrorBase);
-        const err = e as SignalClient.SignalClientError;
+        assert.instanceOf(e, SignalClient.LibSignalErrorBase);
+        const err = e as SignalClient.LibSignalError;
         assert.equal(err.name, 'InvalidRegistrationId');
         assert.equal(err.code, SignalClient.ErrorCode.InvalidRegistrationId);
         assert.exists(err.stack); // Make sure we're still getting the benefits of Error.

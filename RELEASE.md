@@ -1,4 +1,4 @@
-# Making a libsignal-client release
+# Making a libsignal release
 
 ## 0. Make sure all CI tests are passing on the latest commit
 
@@ -8,7 +8,7 @@ Check GitHub to see if the latest commit has all tests passing. If not, fix the 
 
 The first version component should always be 0, to indicate that Signal does not promise stability between releases of the library.
 
-If the changes will require updates in Signal-Android, Signal-iOS, or Signal-Desktop, increase the second version component and reset the third to 0. Otherwise, increase the third version component.
+A change is "breaking" if it will require updates in any of the Signal client apps or server components, or in external Rust clients of libsignal-protocol, zkgroup, poksho, attest, device-transfer, or signal-crypto. If there are any breaking changes, increase the second version component and reset the third to 0. Otherwise, increase the third version component.
 
 ```
 bin/update_versions.py 0.x.y
@@ -50,7 +50,7 @@ Note that both the tag *and* the branch need to be pushed.
 
 ### Android: Sonatype
 
-1. Wait for the "Publish JNI Artifacts to GitHub Release" action to complete. These artifacts, though not built reproducibly, will be included in the "testable" jar that supports running on macOS and Windows as well.
+1. Wait for the "Publish JNI Artifacts to GitHub Release" action to complete. These artifacts, though not built reproducibly, will be included in the `libsignal-client` and `libsignal-server` jars to support running on macOS and Windows as well.
 2. Set the environment variables `SONATYPE_USERNAME`, `SONATYPE_PASSWORD`, `KEYRING_FILE`, `SIGNING_KEY`, and `SIGNING_KEY_PASSSWORD`.
 3. Run `make -C java publish_java` to build through Docker.
 
@@ -58,8 +58,8 @@ Note that Sonatype is pretty slow; even after the build completes it might take 
 
 ### Node: NPM
 
-In the signalapp/libsignal-client repository on GitHub, run the "Publish to NPM" action. Use the tag you just made as the "Git Tag" and leave the "NPM Tag" as "latest".
+In the signalapp/libsignal repository on GitHub, run the "Publish to NPM" action. Use the tag you just made as the "Git Tag" and leave the "NPM Tag" as "latest".
 
 ### iOS: Let the iOS team know
 
-They build all their CocoaPods on a dedicated build server, including libsignal-client.
+They build all their CocoaPods on a dedicated build server, including libsignal.

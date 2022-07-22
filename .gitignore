@@ -17,13 +17,13 @@
 
 java/build
 java/android/build/
-java/java/build
-java/tests/build
+java/client/build
+java/server/build
 java/.gradle
-java/gradle.properties
 java/local.properties
 java/android/src/main/jniLibs
-java/java/src/main/resources
-java/java/src/otherPlatformLibraries/resources
+java/shared/resources/*.dylib
+java/shared/resources/*.so
+java/shared/resources/*.dll
 
 .DS_Store
