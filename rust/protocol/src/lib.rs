@@ -41,7 +41,7 @@ mod state;
 mod storage;
 mod utils;
 
-use error::Result;
+pub use error::Result;
 
 pub use address::{DeviceId, ProtocolAddress};
 pub use curve::{KeyPair, PrivateKey, PublicKey};
