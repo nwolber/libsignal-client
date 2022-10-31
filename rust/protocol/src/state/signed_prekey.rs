@@ -12,6 +12,7 @@ use std::fmt;
 
 /// A unique identifier selecting among this client's known signed pre-keys.
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignedPreKeyId(u32);
 
 impl From<u32> for SignedPreKeyId {
