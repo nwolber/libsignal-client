@@ -6,7 +6,7 @@
 [package]
 name = "zkgroup"
 version = "0.9.0"
-authors = ["Trevor Perrin <trevp@signal.org>"]
+authors = ["Signal Messenger LLC"]
 edition = "2018"
 description = "A zero-knowledge group library"
 license = "AGPL-3.0-only"
@@ -23,6 +23,10 @@ aes-gcm-siv = "0.10.0"
 displaydoc = "0.2"
 lazy_static = "1.4.0"
 
+# For generation
+base64 = { version = "0.13.0", optional = true }
+rand = { version = "0.7.3", optional = true }
+
 [dependencies.curve25519-dalek]
 features = ["serde"]
 version = "3.0.0"
@@ -32,8 +36,12 @@ branch = "lizard2"
 # Below is for benchmarking:
 
 [dev-dependencies]
-criterion = "0.3.1"
+criterion = "0.4"
 
 [[bench]]
 name = "zkgroup_benchmarks"
 harness = false
+
+[[bin]]
+name = "generate-server-params"
+required-features = ["base64", "rand"]

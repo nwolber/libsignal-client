@@ -3,45 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use crate::api;
 use crate::common::constants::*;
 use crate::common::errors::*;
 use crate::common::simple_types::*;
-use crate::crypto;
-use serde::Serializer;
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-pub struct PniCredentialPresentationV1 {
-    pub(crate) reserved: ReservedBytes,
-    pub(crate) proof: crypto::proofs::PniCredentialPresentationProofV1,
-    pub(crate) aci_enc_ciphertext: crypto::uid_encryption::Ciphertext,
-    pub(crate) pni_enc_ciphertext: crypto::uid_encryption::Ciphertext,
-    pub(crate) profile_key_enc_ciphertext: crypto::profile_key_encryption::Ciphertext,
-}
-
-impl PniCredentialPresentationV1 {
-    pub fn get_aci_ciphertext(&self) -> api::groups::UuidCiphertext {
-        api::groups::UuidCiphertext {
-            reserved: Default::default(),
-            ciphertext: self.aci_enc_ciphertext,
-        }
-    }
-
-    pub fn get_pni_ciphertext(&self) -> api::groups::UuidCiphertext {
-        api::groups::UuidCiphertext {
-            reserved: Default::default(),
-            ciphertext: self.pni_enc_ciphertext,
-        }
-    }
-
-    pub fn get_profile_key_ciphertext(&self) -> api::groups::ProfileKeyCiphertext {
-        api::groups::ProfileKeyCiphertext {
-            reserved: Default::default(),
-            ciphertext: self.profile_key_enc_ciphertext,
-        }
-    }
-}
+use crate::{api, crypto};
+use serde::{Deserialize, Serialize, Serializer};
 
 #[derive(Serialize, Deserialize)]
 pub struct PniCredentialPresentationV2 {
@@ -76,7 +42,6 @@ impl PniCredentialPresentationV2 {
 }
 
 pub enum AnyPniCredentialPresentation {
-    V1(PniCredentialPresentationV1),
     V2(PniCredentialPresentationV2),
 }
 
@@ -84,10 +49,8 @@ impl AnyPniCredentialPresentation {
     pub fn new(presentation_bytes: &[u8]) -> Result<Self, ZkGroupDeserializationFailure> {
         match presentation_bytes[0] {
             PRESENTATION_VERSION_1 => {
-                match bincode::deserialize::<PniCredentialPresentationV1>(presentation_bytes) {
-                    Ok(presentation) => Ok(AnyPniCredentialPresentation::V1(presentation)),
-                    Err(_) => Err(ZkGroupDeserializationFailure),
-                }
+                // No longer supported.
+                Err(ZkGroupDeserializationFailure)
             }
             PRESENTATION_VERSION_2 => {
                 match bincode::deserialize::<PniCredentialPresentationV2>(presentation_bytes) {
@@ -101,9 +64,6 @@ impl AnyPniCredentialPresentation {
 
     pub fn get_aci_ciphertext(&self) -> api::groups::UuidCiphertext {
         match self {
-            AnyPniCredentialPresentation::V1(presentation_v1) => {
-                presentation_v1.get_aci_ciphertext()
-            }
             AnyPniCredentialPresentation::V2(presentation_v2) => {
                 presentation_v2.get_aci_ciphertext()
             }
@@ -112,9 +72,6 @@ impl AnyPniCredentialPresentation {
 
     pub fn get_pni_ciphertext(&self) -> api::groups::UuidCiphertext {
         match self {
-            AnyPniCredentialPresentation::V1(presentation_v1) => {
-                presentation_v1.get_pni_ciphertext()
-            }
             AnyPniCredentialPresentation::V2(presentation_v2) => {
                 presentation_v2.get_pni_ciphertext()
             }
@@ -123,9 +80,6 @@ impl AnyPniCredentialPresentation {
 
     pub fn get_profile_key_ciphertext(&self) -> api::groups::ProfileKeyCiphertext {
         match self {
-            AnyPniCredentialPresentation::V1(presentation_v1) => {
-                presentation_v1.get_profile_key_ciphertext()
-            }
             AnyPniCredentialPresentation::V2(presentation_v2) => {
                 presentation_v2.get_profile_key_ciphertext()
             }
@@ -139,9 +93,6 @@ impl Serialize for AnyPniCredentialPresentation {
         S: Serializer,
     {
         match self {
-            AnyPniCredentialPresentation::V1(presentation_v1) => {
-                presentation_v1.serialize(serializer)
-            }
             AnyPniCredentialPresentation::V2(presentation_v2) => {
                 presentation_v2.serialize(serializer)
             }

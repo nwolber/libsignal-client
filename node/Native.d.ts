@@ -65,7 +65,7 @@ export function Cds2ClientState_CompleteHandshake(cli: Wrapper<Cds2ClientState>,
 export function Cds2ClientState_EstablishedRecv(cli: Wrapper<Cds2ClientState>, receivedCiphertext: Buffer): Buffer;
 export function Cds2ClientState_EstablishedSend(cli: Wrapper<Cds2ClientState>, plaintextToSend: Buffer): Buffer;
 export function Cds2ClientState_InitialRequest(obj: Wrapper<Cds2ClientState>): Buffer;
-export function Cds2ClientState_New(mrenclave: Buffer, caCert: Buffer, attestationMsg: Buffer, earliestValidTimestamp: Timestamp): Cds2ClientState;
+export function Cds2ClientState_New(mrenclave: Buffer, attestationMsg: Buffer, currentTimestamp: Timestamp): Cds2ClientState;
 export function CiphertextMessage_FromPlaintextContent(m: Wrapper<PlaintextContent>): CiphertextMessage;
 export function CiphertextMessage_Serialize(obj: Wrapper<CiphertextMessage>): Buffer;
 export function CiphertextMessage_Type(msg: Wrapper<CiphertextMessage>): number;
@@ -104,6 +104,7 @@ export function HsmEnclaveClient_EstablishedRecv(cli: Wrapper<HsmEnclaveClient>,
 export function HsmEnclaveClient_EstablishedSend(cli: Wrapper<HsmEnclaveClient>, plaintextToSend: Buffer): Buffer;
 export function HsmEnclaveClient_InitialRequest(obj: Wrapper<HsmEnclaveClient>): Buffer;
 export function HsmEnclaveClient_New(trustedPublicKey: Buffer, trustedCodeHashes: Buffer): HsmEnclaveClient;
+export function IdentityKeyPair_Deserialize(buffer: Buffer): {publicKey:PublicKey,privateKey:PrivateKey};
 export function IdentityKeyPair_Serialize(publicKey: Wrapper<PublicKey>, privateKey: Wrapper<PrivateKey>): Buffer;
 export function IdentityKeyPair_SignAlternateIdentity(publicKey: Wrapper<PublicKey>, privateKey: Wrapper<PrivateKey>, otherIdentity: Wrapper<PublicKey>): Buffer;
 export function IdentityKey_VerifyAlternateIdentity(publicKey: Wrapper<PublicKey>, otherIdentity: Wrapper<PublicKey>, signature: Buffer): boolean;
@@ -254,7 +255,7 @@ export function ServerSecretParams_IssuePniCredentialDeterministic(serverSecretP
 export function ServerSecretParams_IssueProfileKeyCredentialDeterministic(serverSecretParams: Serialized<ServerSecretParams>, randomness: Buffer, request: Serialized<ProfileKeyCredentialRequest>, uuid: Uuid, commitment: Serialized<ProfileKeyCommitment>): Serialized<ProfileKeyCredentialResponse>;
 export function ServerSecretParams_IssueReceiptCredentialDeterministic(serverSecretParams: Serialized<ServerSecretParams>, randomness: Buffer, request: Serialized<ReceiptCredentialRequest>, receiptExpirationTime: Timestamp, receiptLevel: Buffer): Serialized<ReceiptCredentialResponse>;
 export function ServerSecretParams_SignDeterministic(params: Serialized<ServerSecretParams>, randomness: Buffer, message: Buffer): Buffer;
-export function ServerSecretParams_VerifyAuthCredentialPresentation(serverSecretParams: Serialized<ServerSecretParams>, groupPublicParams: Serialized<GroupPublicParams>, presentationBytes: Buffer): void;
+export function ServerSecretParams_VerifyAuthCredentialPresentation(serverSecretParams: Serialized<ServerSecretParams>, groupPublicParams: Serialized<GroupPublicParams>, presentationBytes: Buffer, currentTimeInSeconds: Timestamp): void;
 export function ServerSecretParams_VerifyPniCredentialPresentation(serverSecretParams: Serialized<ServerSecretParams>, groupPublicParams: Serialized<GroupPublicParams>, presentationBytes: Buffer): void;
 export function ServerSecretParams_VerifyProfileKeyCredentialPresentation(serverSecretParams: Serialized<ServerSecretParams>, groupPublicParams: Serialized<GroupPublicParams>, presentationBytes: Buffer, currentTimeInSeconds: Timestamp): void;
 export function ServerSecretParams_VerifyReceiptCredentialPresentation(serverSecretParams: Serialized<ServerSecretParams>, presentation: Serialized<ReceiptCredentialPresentation>): void;
