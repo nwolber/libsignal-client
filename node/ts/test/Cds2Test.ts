@@ -6,21 +6,12 @@
 import { assert, use } from 'chai';
 import * as chaiAsPromised from 'chai-as-promised';
 import * as SignalClient from '../index';
+import * as util from './util';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 use(chaiAsPromised);
-
-SignalClient.initLogger(
-  SignalClient.LogLevel.Trace,
-  (level, target, fileOrNull, lineOrNull, message) => {
-    const targetPrefix = target ? '[' + target + '] ' : '';
-    const file = fileOrNull ?? '<unknown>';
-    const line = lineOrNull ?? 0;
-    // eslint-disable-next-line no-console
-    console.log(targetPrefix + file + ':' + line + ': ' + message);
-  }
-);
+util.initLogger();
 
 describe('Cds2Client', () => {
   const mrenclave = Buffer.from(
@@ -30,7 +21,7 @@ describe('Cds2Client', () => {
   const currentDate = new Date(1655857680000);
 
   const attestationMessage = fs.readFileSync(
-    path.join(__dirname, '../../ts/test/clienthandshakestart.data')
+    path.join(__dirname, '../../ts/test/cds2handshakestart.data')
   );
 
   it('create client', () => {
@@ -69,7 +60,7 @@ describe('Cds2Client', () => {
       assert.instanceOf(e, Error);
       assert.instanceOf(e, SignalClient.LibSignalErrorBase);
       const err = e as SignalClient.LibSignalError;
-      assert.equal(err.operation, 'Cds2ClientState_CompleteHandshake'); // the Rust entry point
+      assert.equal(err.operation, 'SgxClientState_CompleteHandshake'); // the Rust entry point
     }
   });
   it('established send fails prior to establishment', () => {
@@ -86,7 +77,7 @@ describe('Cds2Client', () => {
       assert.instanceOf(e, Error);
       assert.instanceOf(e, SignalClient.LibSignalErrorBase);
       const err = e as SignalClient.LibSignalError;
-      assert.equal(err.operation, 'Cds2ClientState_EstablishedSend'); // the Rust entry point
+      assert.equal(err.operation, 'SgxClientState_EstablishedSend'); // the Rust entry point
     }
   });
   it('established recv fails prior to establishment', () => {
@@ -103,7 +94,7 @@ describe('Cds2Client', () => {
       assert.instanceOf(e, Error);
       assert.instanceOf(e, SignalClient.LibSignalErrorBase);
       const err = e as SignalClient.LibSignalError;
-      assert.equal(err.operation, 'Cds2ClientState_EstablishedRecv'); // the Rust entry point
+      assert.equal(err.operation, 'SgxClientState_EstablishedRecv'); // the Rust entry point
     }
   });
 });

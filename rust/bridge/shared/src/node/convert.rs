@@ -12,6 +12,7 @@ use std::hash::Hasher;
 use std::ops::{Deref, DerefMut, RangeInclusive};
 use std::slice;
 
+use crate::io::InputStream;
 use crate::support::{Array, FixedLengthBincodeSerializable, Serialized};
 
 use super::*;
@@ -245,7 +246,7 @@ fn can_convert_js_number_to_int(value: f64, valid_range: RangeInclusive<f64>) ->
 
 // 2**53 - 1, the maximum "safe" integer representable in an f64.
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER
-const MAX_SAFE_JS_INTEGER: f64 = 9007199254740991.0;
+pub(super) const MAX_SAFE_JS_INTEGER: f64 = 9007199254740991.0;
 
 /// Converts non-negative numbers up to [`Number.MAX_SAFE_INTEGER`][].
 ///
@@ -475,7 +476,7 @@ unsafe impl Send for PersistentAssumedImmutableBuffer {}
 /// Logs an error (but does not panic) if the buffer's contents have changed.
 impl Finalize for PersistentAssumedImmutableBuffer {
     fn finalize<'a, C: Context<'a>>(self, cx: &mut C) {
-        if self.hash != calculate_checksum_for_immutable_buffer(&*self) {
+        if self.hash != calculate_checksum_for_immutable_buffer(&self) {
             log::error!("buffer modified while in use");
         }
         self.owner.finalize(cx)
@@ -516,7 +517,7 @@ impl<'a> AsyncArgTypeInfo<'a> for *mut std::ffi::c_void {
 macro_rules! store {
     ($name:ident) => {
         paste! {
-            impl<'a> AsyncArgTypeInfo<'a> for &'a mut dyn libsignal_protocol::$name {
+            impl<'a> AsyncArgTypeInfo<'a> for &'a mut dyn $name {
                 type ArgType = JsObject;
                 type StoredType = [<Node $name>];
                 fn save_async_arg(
@@ -538,6 +539,8 @@ store!(PreKeyStore);
 store!(SenderKeyStore);
 store!(SessionStore);
 store!(SignedPreKeyStore);
+store!(KyberPreKeyStore);
+store!(InputStream);
 
 impl<'a> ResultTypeInfo<'a> for bool {
     type ResultType = JsBoolean;
@@ -889,7 +892,7 @@ where
     ) -> NeonResult<Self> {
         let js_boxed_bridge_handle: Handle<'a, DefaultJsBox<JsBoxContentsFor<Borrowed::Target>>> =
             wrapper.get(cx, NATIVE_HANDLE_PROPERTY)?;
-        let js_box_contents: &JsBoxContentsFor<Borrowed::Target> = &*js_boxed_bridge_handle;
+        let js_box_contents: &JsBoxContentsFor<Borrowed::Target> = &js_boxed_bridge_handle;
         // FIXME: Workaround for https://github.com/neon-bindings/neon/issues/678
         // The lifetime of the boxed contents is necessarily longer than the lifetime of any handles
         // referring to it, i.e. longer than 'a. However, Deref'ing a Handle can only give us a

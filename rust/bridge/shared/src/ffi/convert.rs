@@ -10,6 +10,7 @@ use std::convert::TryInto;
 use std::ffi::CStr;
 use std::ops::Deref;
 
+use crate::io::InputStream;
 use crate::support::{FixedLengthBincodeSerializable, Serialized};
 
 use super::*;
@@ -236,7 +237,7 @@ impl<const LEN: usize> ResultTypeInfo for [u8; LEN] {
 macro_rules! store {
     ($name:ident) => {
         paste! {
-            impl<'a> ArgTypeInfo<'a> for &'a mut dyn libsignal_protocol::$name {
+            impl<'a> ArgTypeInfo<'a> for &'a mut dyn $name {
                 type ArgType = *const [<Ffi $name Struct>];
                 type StoredType = &'a [<Ffi $name Struct>];
                 #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -259,6 +260,8 @@ store!(PreKeyStore);
 store!(SenderKeyStore);
 store!(SessionStore);
 store!(SignedPreKeyStore);
+store!(KyberPreKeyStore);
+store!(InputStream);
 
 impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, SignalProtocolError> {
     type ResultType = T::ResultType;
@@ -274,7 +277,14 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::hsm_enclave::Error>
     }
 }
 
-impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::cds2::Error> {
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::sgx_session::Error> {
+    type ResultType = T::ResultType;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        T::convert_into(self?)
+    }
+}
+
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, signal_pin::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
         T::convert_into(self?)
@@ -282,6 +292,14 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::cds2::Error> {
 }
 
 impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, device_transfer::Error> {
+    type ResultType = T::ResultType;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        T::convert_into(self?)
+    }
+}
+
+#[cfg(feature = "signal-media")]
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, signal_media::sanitize::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
         T::convert_into(self?)
@@ -303,6 +321,13 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupVerificatio
 }
 
 impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupDeserializationFailure> {
+    type ResultType = T::ResultType;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        T::convert_into(self?)
+    }
+}
+
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, usernames::UsernameError> {
     type ResultType = T::ResultType;
     fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
         T::convert_into(self?)
@@ -344,6 +369,21 @@ impl ResultTypeInfo for Option<&str> {
         }
     }
 }
+
+impl ResultTypeInfo for Vec<u8> {
+    type ResultType = OwnedBufferOf<libc::c_uchar>;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        Ok(OwnedBufferOf::from(self.into_boxed_slice()))
+    }
+}
+
+impl ResultTypeInfo for &[u8] {
+    type ResultType = OwnedBufferOf<libc::c_uchar>;
+    fn convert_into(self) -> SignalFfiResult<Self::ResultType> {
+        self.to_vec().convert_into()
+    }
+}
+
 /// `u32::MAX` (`UINT_MAX`, `~0u`) is used to represent `None` here.
 impl ResultTypeInfo for Option<u32> {
     type ResultType = u32;
@@ -606,6 +646,8 @@ macro_rules! ffi_result_type {
     (Timestamp) => (u64);
     (Uuid) => ([u8; 16]);
     ([u8; $len:expr]) => ([u8; $len]);
+    (&[u8]) => (ffi::OwnedBufferOf<libc::c_uchar>);
+    (Vec<u8>) => (ffi::OwnedBufferOf<libc::c_uchar>);
 
     // In order to provide a fixed-sized array of the correct length,
     // a serialized type FooBar must have a constant FOO_BAR_LEN that's in scope (and exposed to C).

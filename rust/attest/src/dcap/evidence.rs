@@ -140,24 +140,20 @@ impl CustomClaims<'_> {
 mod test {
     use super::*;
     use crate::dcap::MREnclave;
+    use crate::util::testio::read_test_file;
     use hex_literal::hex;
     use std::convert::TryFrom;
-    use std::fs;
-    use std::path::Path;
-
-    const PUBKEY: [u8; 32] =
-        hex!("cb2ebba835c72942c685a0c2ed6e8e2ba8de23427c460fb4e53d1941e1d15518");
 
     const EXPECTED_MRENCLAVE: MREnclave =
-        hex!("e5eaa62da3514e8b37ccabddb87e52e7f319ccf5120a13f9e1b42b87ec9dd3dd");
+        hex!("337ac97ce088a132daeb1308ea3159f807de4a827e875b2c90ce21bf4751196f");
 
     #[test]
     fn from_bytes() {
         let data = read_test_file("tests/data/dcap.evidence");
+        let pkey = hex::decode(read_test_file("tests/data/dcap.pubkey")).unwrap();
 
         let evidence = Evidence::try_from(data.as_slice()).expect("should parse");
-
-        assert_eq!(PUBKEY, evidence.claims.map.get("pk").unwrap().as_slice());
+        assert_eq!(pkey, evidence.claims.map.get("pk").unwrap().as_slice());
         assert_eq!(
             EXPECTED_MRENCLAVE,
             evidence.quote.quote_body.report_body.mrenclave
@@ -226,9 +222,5 @@ mod test {
     fn empty_claims() {
         let buf = serialize(&HashMap::new());
         assert!(CustomClaims::try_from(&*buf).unwrap().map.is_empty())
-    }
-
-    fn read_test_file(path: &str) -> Vec<u8> {
-        fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).expect("failed to read file")
     }
 }

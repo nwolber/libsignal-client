@@ -5,12 +5,15 @@
 
 use std::convert::TryFrom;
 use std::fmt;
+use std::io::{Error as IoError, ErrorKind as IoErrorKind};
 
-use attest::cds2::Error as Cds2Error;
 use attest::hsm_enclave::Error as HsmEnclaveError;
+use attest::sgx_session::Error as SgxError;
 use device_transfer::Error as DeviceTransferError;
 use libsignal_protocol::*;
 use signal_crypto::Error as SignalCryptoError;
+use signal_pin::Error as PinError;
+use usernames::UsernameError;
 use zkgroup::{ZkGroupDeserializationFailure, ZkGroupVerificationFailure};
 
 use crate::support::describe_panic;
@@ -23,10 +26,15 @@ pub enum SignalFfiError {
     Signal(SignalProtocolError),
     DeviceTransfer(DeviceTransferError),
     HsmEnclave(HsmEnclaveError),
-    Cds2(Cds2Error),
+    Sgx(SgxError),
+    Pin(PinError),
     SignalCrypto(SignalCryptoError),
     ZkGroupVerificationFailure(ZkGroupVerificationFailure),
     ZkGroupDeserializationFailure(ZkGroupDeserializationFailure),
+    UsernameError(UsernameError),
+    Io(IoError),
+    #[cfg(feature = "signal-media")]
+    MediaSanitizeParse(signal_media::sanitize::ParseErrorReport),
     NullPointer,
     InvalidUtf8String,
     UnexpectedPanic(std::boxed::Box<dyn std::any::Any + std::marker::Send>),
@@ -42,14 +50,21 @@ impl fmt::Display for SignalFfiError {
             SignalFfiError::HsmEnclave(e) => {
                 write!(f, "HSM enclave operation failed: {}", e)
             }
-            SignalFfiError::Cds2(e) => {
-                write!(f, "CDS2 operation failed: {}", e)
+            SignalFfiError::Sgx(e) => {
+                write!(f, "SGX operation failed: {}", e)
             }
             SignalFfiError::SignalCrypto(c) => {
                 write!(f, "Cryptographic operation failed: {}", c)
             }
+            SignalFfiError::Pin(e) => write!(f, "{}", e),
             SignalFfiError::ZkGroupVerificationFailure(e) => write!(f, "{}", e),
             SignalFfiError::ZkGroupDeserializationFailure(e) => write!(f, "{}", e),
+            SignalFfiError::UsernameError(e) => write!(f, "{}", e),
+            SignalFfiError::Io(e) => write!(f, "IO error: {}", e),
+            #[cfg(feature = "signal-media")]
+            SignalFfiError::MediaSanitizeParse(e) => {
+                write!(f, "Media sanitizer failed to parse media file: {}", e)
+            }
             SignalFfiError::NullPointer => write!(f, "null pointer"),
             SignalFfiError::InvalidUtf8String => write!(f, "invalid UTF8 string"),
             SignalFfiError::UnexpectedPanic(e) => {
@@ -77,9 +92,15 @@ impl From<HsmEnclaveError> for SignalFfiError {
     }
 }
 
-impl From<Cds2Error> for SignalFfiError {
-    fn from(e: Cds2Error) -> SignalFfiError {
-        SignalFfiError::Cds2(e)
+impl From<SgxError> for SignalFfiError {
+    fn from(e: SgxError) -> SignalFfiError {
+        SignalFfiError::Sgx(e)
+    }
+}
+
+impl From<PinError> for SignalFfiError {
+    fn from(e: PinError) -> SignalFfiError {
+        SignalFfiError::Pin(e)
     }
 }
 
@@ -101,9 +122,41 @@ impl From<ZkGroupDeserializationFailure> for SignalFfiError {
     }
 }
 
+impl From<UsernameError> for SignalFfiError {
+    fn from(e: UsernameError) -> SignalFfiError {
+        SignalFfiError::UsernameError(e)
+    }
+}
+
+impl From<IoError> for SignalFfiError {
+    fn from(e: IoError) -> SignalFfiError {
+        Self::Io(e)
+    }
+}
+
+#[cfg(feature = "signal-media")]
+impl From<signal_media::sanitize::Error> for SignalFfiError {
+    fn from(e: signal_media::sanitize::Error) -> SignalFfiError {
+        use signal_media::sanitize::Error;
+        match e {
+            Error::Io(e) => Self::Io(e.into()),
+            Error::Parse(e) => Self::MediaSanitizeParse(e),
+        }
+    }
+}
+
 impl From<NullPointerError> for SignalFfiError {
     fn from(_: NullPointerError) -> SignalFfiError {
         SignalFfiError::NullPointer
+    }
+}
+
+impl From<SignalFfiError> for IoError {
+    fn from(e: SignalFfiError) -> Self {
+        match e {
+            SignalFfiError::Io(e) => e,
+            e => IoError::new(IoErrorKind::Other, e.to_string()),
+        }
     }
 }
 

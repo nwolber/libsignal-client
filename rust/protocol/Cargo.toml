@@ -18,18 +18,22 @@ async-trait = "0.1.41"
 block-modes = "0.8"
 curve25519-dalek = "3.0"
 displaydoc = "0.2"
+generic-array = "0.14.5"
 hex = "0.4"
 hkdf = "0.11"
 hmac = "0.11.0"
 itertools = "0.10.1"
 log = "0.4"
 num_enum = "0.5.1"
+pqcrypto-kyber = {version = "0.7.6", default-features = false, features = ["std"]}
+pqcrypto-traits = "0.3.4"
 prost = "0.9"
 rand = "0.7.3"
 serde = {version = "1.0.147", optional = true}
 sha2 = "0.9"
 subtle = "2.2.3"
 thiserror = "1.0.30"
+typenum = "1.12.0"
 uuid = "1.1.2"
 x25519-dalek = "1.0"
 
@@ -39,13 +43,18 @@ serde = ["dep:serde"]
 
 [dev-dependencies]
 criterion = "0.4"
+env_logger = "0.8.1"
 futures-util = "0.3.7"
+proptest = "1.0"
 
 [build-dependencies]
 prost-build = "0.9"
 
 [[bench]]
 harness = false
+name = "curve"
+
+[[bench]]
 name = "session"
 
 [[bench]]
@@ -55,3 +64,7 @@ name = "ratchet"
 [[bench]]
 harness = false
 name = "sealed_sender"
+
+[[bench]]
+harness = false
+name = "kem"

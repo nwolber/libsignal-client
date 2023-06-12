@@ -11,6 +11,7 @@ use paste::paste;
 use std::convert::TryInto;
 use std::ops::Deref;
 
+use crate::io::InputStream;
 use crate::support::{Array, FixedLengthBincodeSerializable, Serialized};
 
 use super::*;
@@ -310,7 +311,7 @@ macro_rules! store {
     ($name:ident) => {
         paste! {
             impl<'storage, 'context: 'storage> ArgTypeInfo<'storage, 'context>
-                for &'storage mut dyn libsignal_protocol::$name
+                for &'storage mut dyn $name
             {
                 type ArgType = JObject<'context>;
                 type StoredType = [<Jni $name>]<'context>;
@@ -349,6 +350,8 @@ store!(PreKeyStore);
 store!(SenderKeyStore);
 store!(SessionStore);
 store!(SignedPreKeyStore);
+store!(KyberPreKeyStore);
+store!(InputStream);
 
 /// A translation from a Java interface where the implementing class wraps the Rust handle.
 impl<'a> SimpleArgTypeInfo<'a> for CiphertextMessageRef<'a> {
@@ -758,7 +761,28 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::hsm_enclave::Error>
     }
 }
 
-impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::cds2::Error> {
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, attest::sgx_session::Error> {
+    type ResultType = T::ResultType;
+    fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
+        T::convert_into(self?, env)
+    }
+    fn convert_into_jobject(signal_jni_result: &SignalJniResult<Self::ResultType>) -> JObject {
+        <T as ResultTypeInfo>::convert_into_jobject(signal_jni_result)
+    }
+}
+
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, signal_pin::Error> {
+    type ResultType = T::ResultType;
+    fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
+        T::convert_into(self?, env)
+    }
+    fn convert_into_jobject(signal_jni_result: &SignalJniResult<Self::ResultType>) -> JObject {
+        <T as ResultTypeInfo>::convert_into_jobject(signal_jni_result)
+    }
+}
+
+#[cfg(feature = "signal-media")]
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, signal_media::sanitize::Error> {
     type ResultType = T::ResultType;
     fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
         T::convert_into(self?, env)
@@ -789,6 +813,16 @@ impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupVerificatio
 }
 
 impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, zkgroup::ZkGroupDeserializationFailure> {
+    type ResultType = T::ResultType;
+    fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
+        T::convert_into(self?, env)
+    }
+    fn convert_into_jobject(signal_jni_result: &SignalJniResult<Self::ResultType>) -> JObject {
+        <T as ResultTypeInfo>::convert_into_jobject(signal_jni_result)
+    }
+}
+
+impl<T: ResultTypeInfo> ResultTypeInfo for Result<T, usernames::UsernameError> {
     type ResultType = T::ResultType;
     fn convert_into(self, env: &JNIEnv) -> SignalJniResult<Self::ResultType> {
         T::convert_into(self?, env)
@@ -1166,13 +1200,16 @@ macro_rules! jni_result_type {
     (Option<$typ:tt>) => {
         jni_result_type!($typ)
     };
+    (Option<$typ:tt<$($args:tt),+> >) => {
+        jni_result_type!($typ<$($args),+>)
+    };
     (CiphertextMessage) => {
         jni::JavaReturnCiphertextMessage
     };
     (Serialized<$typ:ident>) => {
         jni::jbyteArray
     };
-    ( $handle:ident ) => {
+    ( $handle:ty ) => {
         jni::ObjectHandle
     };
 }
