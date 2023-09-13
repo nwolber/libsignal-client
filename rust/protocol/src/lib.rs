@@ -46,6 +46,7 @@ mod utils;
 pub use address::{
     Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind,
 };
+pub use crypto::hmac_sha256;
 pub use curve::{KeyPair, PrivateKey, PublicKey};
 pub use error::{Result, SignalProtocolError};
 pub use fingerprint::{DisplayableFingerprint, Fingerprint, ScannableFingerprint};
