@@ -582,6 +582,11 @@ mod service_id_tests {
 ///
 /// Used in [ProtocolAddress].
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
+)]
 pub struct DeviceId(u32);
 
 impl From<u32> for DeviceId {
