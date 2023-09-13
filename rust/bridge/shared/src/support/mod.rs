@@ -26,9 +26,10 @@ pub fn describe_panic(any: &Box<dyn std::any::Any + Send>) -> String {
 ///
 /// Full form:
 ///
-/// ```no_run
+/// ```ignore
 /// # #[macro_use] extern crate libsignal_bridge;
 /// # struct Foo;
+/// # #[cfg(ignore_even_when_running_all_tests)]
 /// bridge_handle!(Foo, clone = true, mut = true, ffi = "foo", jni = "Foo", node = "Foo");
 /// ```
 ///
@@ -89,7 +90,7 @@ macro_rules! bridge_handle {
 ///
 /// Example:
 ///
-/// ```no_run
+/// ```ignore
 /// # #[macro_use] extern crate libsignal_bridge_macros;
 /// # struct Foo;
 /// # impl Foo {
@@ -97,7 +98,8 @@ macro_rules! bridge_handle {
 /// #         Err(())
 /// #     }
 /// # }
-///
+/// #
+/// # #[cfg(ignore_even_when_running_all_tests)]
 /// bridge_deserialize!(Foo::try_from); // generates Foo_Deserialize
 /// ```
 ///
@@ -108,49 +110,12 @@ macro_rules! bridge_handle {
 /// functions that are generated (they are always suffixed with `_Deserialize` or `_deserialize`
 /// as appropriate). If you need additional flexibility, use `bridge_fn` directly.
 macro_rules! bridge_deserialize {
-    ($typ:ident::$fn:path) => {
+    ($typ:ident::$fn:path $(, $param:ident = $val:tt)*) => {
         paste! {
-            #[bridge_fn]
+            #[bridge_fn($($param = $val),*)]
             fn [<$typ _Deserialize>](data: &[u8]) -> Result<$typ> {
                 $typ::$fn(data)
             }
-        }
-    };
-}
-
-/// Exposes a buffer-returning getter to the bridges.
-///
-/// Example:
-///
-/// ```no_run
-/// # #[macro_use] extern crate libsignal_bridge_macros;
-/// # struct Foo;
-/// # impl Foo {
-/// #     fn payload(&self) -> Result<Vec<u8>, ()> {
-/// #         Err(())
-/// #     }
-/// # }
-///
-/// bridge_get_buffer!(Foo::payload -> Vec<u8>); // generates Foo_GetPayload
-/// ```
-///
-/// As a special case, accessors that produce `Box<[u8]>` can be converted to returning `Vec<u8>`.
-///
-/// Like `bridge_fn`, the `ffi`, `jni`, and `node` parameters allow customizing the name of the
-/// resulting entry points; they can also be `false` to disable a particular entry point.
-macro_rules! bridge_get_buffer {
-    ($typ:ident :: $method:ident as $name:ident -> $result:ty $(, $param:ident = $val:tt)*) => {
-        paste! {
-            #[bridge_fn_buffer($($param = $val),*)]
-            fn [<$typ _ $name>](obj: &$typ) -> Result<$result> {
-                let result = TransformHelper($typ::$method(obj));
-                Ok(result.ok_if_needed()?.into_vec_if_needed().0)
-            }
-        }
-    };
-    ($typ:ident :: $method:ident -> $result:ty $(, $param:ident = $val:tt)*) => {
-        paste! {
-            bridge_get_buffer!($typ::$method as [<Get $method:camel>] -> $result $(, $param = $val)*);
         }
     };
 }
@@ -159,7 +124,7 @@ macro_rules! bridge_get_buffer {
 ///
 /// Full form:
 ///
-/// ```no_run
+/// ```ignore
 /// # #[macro_use] extern crate libsignal_bridge;
 /// # struct Foo;
 /// impl Foo {
@@ -169,6 +134,7 @@ macro_rules! bridge_get_buffer {
 ///     }
 /// }
 ///
+/// # #[cfg(ignore_even_when_running_all_tests)]
 /// bridge_get!(Foo::bar as GetBar -> &str, ffi = "foo_get_bar", jni = "Foo_GetBar", node = "Foo_GetBar");
 /// ```
 ///
@@ -177,7 +143,7 @@ macro_rules! bridge_get_buffer {
 ///
 /// Roughly equivalent to
 ///
-/// ```no_run
+/// ```ignore
 /// # #[macro_use] extern crate libsignal_bridge_macros;
 /// # struct Foo;
 /// # impl Foo {
@@ -186,6 +152,7 @@ macro_rules! bridge_get_buffer {
 /// #     }
 /// # }
 ///
+/// # #[cfg(ignore_even_when_running_all_tests)]
 /// #[bridge_fn]
 /// fn Foo_GetBar(obj: &Foo) -> Result<&str> {
 ///   Foo::bar(obj)   

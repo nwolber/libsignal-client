@@ -17,6 +17,7 @@ public class Aes256Ctr32 implements NativeHandleGuard.Owner {
   }
 
   @Override
+  @SuppressWarnings("deprecation")
   protected void finalize() {
     Native.Aes256Ctr32_Destroy(this.unsafeHandle);
   }

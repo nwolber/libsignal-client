@@ -28,16 +28,20 @@ public class SessionRecord: ClonableHandleOwner {
         return self.withNativeHandle { nativeHandle in
             failOnError {
                 try invokeFnReturningArray {
-                    signal_session_record_serialize($0, $1, nativeHandle)
+                    signal_session_record_serialize($0, nativeHandle)
                 }
             }
         }
     }
 
     public var hasCurrentState: Bool {
+        hasCurrentState(now: Date())
+    }
+
+    public func hasCurrentState(now: Date) -> Bool {
         var result = false
         self.withNativeHandle { nativeHandle in
-            failOnError(signal_session_record_has_current_state(&result, nativeHandle))
+            failOnError(signal_session_record_has_usable_sender_chain(&result, nativeHandle, UInt64(now.timeIntervalSince1970 * 1000)))
         }
         return result
     }

@@ -6,6 +6,7 @@
 use super::*;
 
 use paste::paste;
+use signal_media::sanitize;
 use std::fmt;
 
 const ERRORS_PROPERTY_NAME: &str = "Errors";
@@ -82,6 +83,10 @@ pub trait SignalNodeError: Sized + fmt::Display {
     }
 }
 
+const IO_ERROR: &str = "IoError";
+const INVALID_MEDIA_INPUT: &str = "InvalidMediaInput";
+const UNSUPPORTED_MEDIA_INPUT: &str = "UnsupportedMediaInput";
+
 impl SignalNodeError for neon::result::Throw {
     fn throw<'a>(
         self,
@@ -155,7 +160,7 @@ impl SignalNodeError for SignalProtocolError {
             SignalProtocolError::InvalidSenderKeySession { distribution_id } => {
                 let props = cx.empty_object();
                 let distribution_id_str =
-                    cx.string(format!("{:x}", distribution_id.to_hyphenated_ref()));
+                    cx.string(format!("{:x}", distribution_id.as_hyphenated()));
                 props.set(cx, "distribution_id", distribution_id_str)?;
                 new_js_error(
                     cx,
@@ -183,13 +188,99 @@ impl SignalNodeError for device_transfer::Error {}
 
 impl SignalNodeError for attest::hsm_enclave::Error {}
 
-impl SignalNodeError for attest::cds2::Error {}
+impl SignalNodeError for attest::sgx_session::Error {}
 
 impl SignalNodeError for signal_crypto::Error {}
 
 impl SignalNodeError for zkgroup::ZkGroupVerificationFailure {}
 
 impl SignalNodeError for zkgroup::ZkGroupDeserializationFailure {}
+
+impl SignalNodeError for usernames::UsernameError {
+    fn throw<'a>(
+        self,
+        cx: &mut impl Context<'a>,
+        module: Handle<'a, JsObject>,
+        operation_name: &str,
+    ) -> JsResult<'a, JsValue> {
+        let name = match &self {
+            Self::BadNicknameCharacter => Some("BadNicknameCharacter"),
+            Self::NicknameTooShort => Some("NicknameTooShort"),
+            Self::NicknameTooLong => Some("NicknameTooLong"),
+            Self::CannotBeEmpty => Some("CannotBeEmpty"),
+            Self::CannotStartWithDigit => Some("CannotStartWithDigit"),
+            Self::MissingSeparator => Some("MissingSeparator"),
+            // These don't get a dedicated error code
+            // because clients won't need to distinguish them from other errors.
+            Self::BadDiscriminator => None,
+            Self::ProofVerificationFailure => None,
+        };
+        let message = self.to_string();
+        match new_js_error(cx, module, name, &message, operation_name, None) {
+            Some(error) => cx.throw(error),
+            None => {
+                // Make sure we still throw something.
+                cx.throw_error(message)
+            }
+        }
+    }
+}
+
+impl SignalNodeError for usernames::UsernameLinkError {
+    fn throw<'a>(
+        self,
+        cx: &mut impl Context<'a>,
+        module: Handle<'a, JsObject>,
+        operation_name: &str,
+    ) -> JsResult<'a, JsValue> {
+        let name = match &self {
+            Self::InputDataTooLong => Some("InputDataTooLong"),
+            Self::InvalidEntropyDataLength => Some("InvalidEntropyDataLength"),
+            Self::UsernameLinkDataTooShort
+            | Self::HmacMismatch
+            | Self::BadCiphertext
+            | Self::InvalidDecryptedDataStructure => Some("InvalidUsernameLinkEncryptedData"),
+        };
+        let message = self.to_string();
+        match new_js_error(cx, module, name, &message, operation_name, None) {
+            Some(error) => cx.throw(error),
+            None => {
+                // Make sure we still throw something.
+                cx.throw_error(message)
+            }
+        }
+    }
+}
+
+impl SignalNodeError for sanitize::Error {
+    fn throw<'a>(
+        self,
+        cx: &mut impl Context<'a>,
+        module: Handle<'a, JsObject>,
+        operation_name: &str,
+    ) -> JsResult<'a, JsValue> {
+        let name = match &self {
+            sanitize::Error::Io(_) => Some(IO_ERROR),
+            sanitize::Error::Parse(err) => match err.kind {
+                sanitize::ParseError::InvalidBoxLayout => Some(INVALID_MEDIA_INPUT),
+                sanitize::ParseError::InvalidInput => Some(INVALID_MEDIA_INPUT),
+                sanitize::ParseError::MissingRequiredBox(_) => Some(INVALID_MEDIA_INPUT),
+                sanitize::ParseError::TruncatedBox => Some(INVALID_MEDIA_INPUT),
+                sanitize::ParseError::UnsupportedBox(_) => Some(UNSUPPORTED_MEDIA_INPUT),
+                sanitize::ParseError::UnsupportedBoxLayout => Some(UNSUPPORTED_MEDIA_INPUT),
+                sanitize::ParseError::UnsupportedFormat(_) => Some(UNSUPPORTED_MEDIA_INPUT),
+            },
+        };
+        let message = self.to_string();
+        match new_js_error(cx, module, name, &message, operation_name, None) {
+            Some(error) => cx.throw(error),
+            None => {
+                // Make sure we still throw something.
+                cx.throw_error(&message)
+            }
+        }
+    }
+}
 
 /// Represents an error returned by a callback.
 #[derive(Debug)]

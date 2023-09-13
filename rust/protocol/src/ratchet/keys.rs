@@ -5,8 +5,7 @@
 
 use arrayref::array_ref;
 
-use crate::crypto;
-use crate::{PrivateKey, PublicKey, Result};
+use crate::{crypto, PrivateKey, PublicKey, Result};
 use std::fmt;
 
 pub(crate) struct MessageKeys {
@@ -119,7 +118,7 @@ impl RootKey {
     }
 
     pub(crate) fn create_chain(
-        &self,
+        self,
         their_ratchet_key: &PublicKey,
         our_ratchet_key: &PrivateKey,
     ) -> Result<(RootKey, ChainKey)> {

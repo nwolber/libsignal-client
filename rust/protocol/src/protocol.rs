@@ -3,21 +3,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use crate::proto;
-use crate::{IdentityKey, PrivateKey, PublicKey, Result, SignalProtocolError};
+use crate::state::{KyberPreKeyId, PreKeyId, SignedPreKeyId};
+use crate::{kem, proto, IdentityKey, PrivateKey, PublicKey, Result, SignalProtocolError};
 
 use std::convert::TryFrom;
 
-use hmac::{Hmac, Mac, NewMac};
+use hmac::{Hmac, Mac};
 use prost::Message;
 use rand::{CryptoRng, Rng};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-pub const CIPHERTEXT_MESSAGE_CURRENT_VERSION: u8 = 3;
-pub const SENDERKEY_MESSAGE_CURRENT_VERSION: u8 = 3;
+pub(crate) const CIPHERTEXT_MESSAGE_CURRENT_VERSION: u8 = 4;
+// Backward compatible, lacking Kyber keys, version
+pub(crate) const CIPHERTEXT_MESSAGE_PRE_KYBER_VERSION: u8 = 3;
+pub(crate) const SENDERKEY_MESSAGE_CURRENT_VERSION: u8 = 3;
 
+#[derive(Debug)]
 pub enum CiphertextMessage {
     SignalMessage(SignalMessage),
     PreKeySignalMessage(PreKeySignalMessage),
@@ -125,12 +128,12 @@ impl SignalMessage {
 
     #[inline]
     pub fn serialized(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 
     #[inline]
     pub fn body(&self) -> &[u8] {
-        &*self.ciphertext
+        &self.ciphertext
     }
 
     pub fn verify_mac(
@@ -181,7 +184,7 @@ impl SignalMessage {
 
 impl AsRef<[u8]> for SignalMessage {
     fn as_ref(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 }
 
@@ -193,7 +196,7 @@ impl TryFrom<&[u8]> for SignalMessage {
             return Err(SignalProtocolError::CiphertextMessageTooShort(value.len()));
         }
         let message_version = value[0] >> 4;
-        if message_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version < CIPHERTEXT_MESSAGE_PRE_KYBER_VERSION {
             return Err(SignalProtocolError::LegacyCiphertextVersion(
                 message_version,
             ));
@@ -233,11 +236,27 @@ impl TryFrom<&[u8]> for SignalMessage {
 }
 
 #[derive(Debug, Clone)]
+pub struct KyberPayload {
+    pre_key_id: KyberPreKeyId,
+    ciphertext: kem::SerializedCiphertext,
+}
+
+impl KyberPayload {
+    pub fn new(id: KyberPreKeyId, ciphertext: kem::SerializedCiphertext) -> Self {
+        Self {
+            pre_key_id: id,
+            ciphertext,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PreKeySignalMessage {
     message_version: u8,
     registration_id: u32,
-    pre_key_id: Option<u32>,
-    signed_pre_key_id: u32,
+    pre_key_id: Option<PreKeyId>,
+    signed_pre_key_id: SignedPreKeyId,
+    kyber_payload: Option<KyberPayload>,
     base_key: PublicKey,
     identity_key: IdentityKey,
     message: SignalMessage,
@@ -245,19 +264,25 @@ pub struct PreKeySignalMessage {
 }
 
 impl PreKeySignalMessage {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         message_version: u8,
         registration_id: u32,
-        pre_key_id: Option<u32>,
-        signed_pre_key_id: u32,
+        pre_key_id: Option<PreKeyId>,
+        signed_pre_key_id: SignedPreKeyId,
+        kyber_payload: Option<KyberPayload>,
         base_key: PublicKey,
         identity_key: IdentityKey,
         message: SignalMessage,
     ) -> Result<Self> {
         let proto_message = proto::wire::PreKeySignalMessage {
             registration_id: Some(registration_id),
-            pre_key_id,
-            signed_pre_key_id: Some(signed_pre_key_id),
+            pre_key_id: pre_key_id.map(|id| id.into()),
+            signed_pre_key_id: Some(signed_pre_key_id.into()),
+            kyber_pre_key_id: kyber_payload.as_ref().map(|kyber| kyber.pre_key_id.into()),
+            kyber_ciphertext: kyber_payload
+                .as_ref()
+                .map(|kyber| kyber.ciphertext.to_vec()),
             base_key: Some(base_key.serialize().into_vec()),
             identity_key: Some(identity_key.serialize().into_vec()),
             message: Some(Vec::from(message.as_ref())),
@@ -273,6 +298,7 @@ impl PreKeySignalMessage {
             registration_id,
             pre_key_id,
             signed_pre_key_id,
+            kyber_payload,
             base_key,
             identity_key,
             message,
@@ -291,13 +317,23 @@ impl PreKeySignalMessage {
     }
 
     #[inline]
-    pub fn pre_key_id(&self) -> Option<u32> {
+    pub fn pre_key_id(&self) -> Option<PreKeyId> {
         self.pre_key_id
     }
 
     #[inline]
-    pub fn signed_pre_key_id(&self) -> u32 {
+    pub fn signed_pre_key_id(&self) -> SignedPreKeyId {
         self.signed_pre_key_id
+    }
+
+    #[inline]
+    pub fn kyber_pre_key_id(&self) -> Option<KyberPreKeyId> {
+        self.kyber_payload.as_ref().map(|kyber| kyber.pre_key_id)
+    }
+
+    #[inline]
+    pub fn kyber_ciphertext(&self) -> Option<&kem::SerializedCiphertext> {
+        self.kyber_payload.as_ref().map(|kyber| &kyber.ciphertext)
     }
 
     #[inline]
@@ -317,13 +353,13 @@ impl PreKeySignalMessage {
 
     #[inline]
     pub fn serialized(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 }
 
 impl AsRef<[u8]> for PreKeySignalMessage {
     fn as_ref(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 }
 
@@ -336,7 +372,7 @@ impl TryFrom<&[u8]> for PreKeySignalMessage {
         }
 
         let message_version = value[0] >> 4;
-        if message_version < CIPHERTEXT_MESSAGE_CURRENT_VERSION {
+        if message_version < CIPHERTEXT_MESSAGE_PRE_KYBER_VERSION {
             return Err(SignalProtocolError::LegacyCiphertextVersion(
                 message_version,
             ));
@@ -365,11 +401,32 @@ impl TryFrom<&[u8]> for PreKeySignalMessage {
 
         let base_key = PublicKey::deserialize(base_key.as_ref())?;
 
+        let kyber_payload = match (
+            proto_structure.kyber_pre_key_id,
+            proto_structure.kyber_ciphertext,
+        ) {
+            (Some(id), Some(ct)) => Some(KyberPayload::new(id.into(), ct.into_boxed_slice())),
+            (None, None) if message_version <= CIPHERTEXT_MESSAGE_PRE_KYBER_VERSION => None,
+            (None, None) => {
+                return Err(SignalProtocolError::InvalidMessage(
+                    CiphertextMessageType::PreKey,
+                    "Kyber pre key must be present for this session version",
+                ));
+            }
+            _ => {
+                return Err(SignalProtocolError::InvalidMessage(
+                    CiphertextMessageType::PreKey,
+                    "Both or neither kyber pre_key_id and kyber_ciphertext can be present",
+                ));
+            }
+        };
+
         Ok(PreKeySignalMessage {
             message_version,
             registration_id: proto_structure.registration_id.unwrap_or(0),
-            pre_key_id: proto_structure.pre_key_id,
-            signed_pre_key_id,
+            pre_key_id: proto_structure.pre_key_id.map(|id| id.into()),
+            signed_pre_key_id: signed_pre_key_id.into(),
+            kyber_payload,
             base_key,
             identity_key: IdentityKey::try_from(identity_key.as_ref())?,
             message: SignalMessage::try_from(message.as_ref())?,
@@ -456,18 +513,18 @@ impl SenderKeyMessage {
 
     #[inline]
     pub fn ciphertext(&self) -> &[u8] {
-        &*self.ciphertext
+        &self.ciphertext
     }
 
     #[inline]
     pub fn serialized(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 }
 
 impl AsRef<[u8]> for SenderKeyMessage {
     fn as_ref(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 }
 
@@ -596,13 +653,13 @@ impl SenderKeyDistributionMessage {
 
     #[inline]
     pub fn serialized(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 }
 
 impl AsRef<[u8]> for SenderKeyDistributionMessage {
     fn as_ref(&self) -> &[u8] {
-        &*self.serialized
+        &self.serialized
     }
 }
 
@@ -866,7 +923,7 @@ mod tests {
         let receiver_identity_key_pair = KeyPair::generate(csprng);
 
         SignalMessage::new(
-            3,
+            4,
             &mac_key,
             sender_ratchet_key_pair.public_key,
             42,
@@ -906,7 +963,8 @@ mod tests {
             3,
             365,
             None,
-            97,
+            97.into(),
+            None, // TODO: add kyber prekeys
             base_key_pair.public_key,
             identity_key_pair.public_key.into(),
             message,
@@ -1016,7 +1074,8 @@ mod tests {
             3,
             365,
             None,
-            97,
+            97.into(),
+            None, // TODO: add kyber prekeys
             base_key_pair.public_key,
             identity_key_pair.public_key.into(),
             message,

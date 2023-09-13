@@ -1,11 +1,12 @@
 //
-// Copyright 2021 Signal Messenger, LLC.
+// Copyright 2021-2022 Signal Messenger, LLC.
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
 #![no_main]
 
 use std::convert::TryFrom;
+use std::time::SystemTime;
 
 use futures_util::FutureExt;
 use libfuzzer_sys::fuzz_target;
@@ -33,14 +34,14 @@ impl Participant {
         let their_signed_pre_key_public = their_signed_pre_key_pair.public_key.serialize();
         let their_signed_pre_key_signature = them
             .store
-            .get_identity_key_pair(None)
+            .get_identity_key_pair()
             .await
             .unwrap()
             .private_key()
             .calculate_signature(&their_signed_pre_key_public, rng)
             .unwrap();
 
-        let signed_pre_key_id = rng.gen_range(0, 0xFF_FFFF);
+        let signed_pre_key_id: SignedPreKeyId = rng.gen_range(0..0xFF_FFFF).into();
 
         them.store
             .save_signed_pre_key(
@@ -51,20 +52,18 @@ impl Participant {
                     &their_signed_pre_key_pair,
                     &their_signed_pre_key_signature,
                 ),
-                None,
             )
             .await
             .unwrap();
 
         let pre_key_info = if use_one_time_pre_key {
-            let pre_key_id = rng.gen_range(0, 0xFF_FFFF);
+            let pre_key_id: PreKeyId = rng.gen_range(0..0xFF_FFFF).into();
             let one_time_pre_key = KeyPair::generate(rng);
 
             them.store
                 .save_pre_key(
                     pre_key_id,
                     &PreKeyRecord::new(pre_key_id, &one_time_pre_key),
-                    None,
                 )
                 .await
                 .unwrap();
@@ -74,15 +73,15 @@ impl Participant {
         };
 
         let their_pre_key_bundle = PreKeyBundle::new(
-            them.store.get_local_registration_id(None).await.unwrap(),
-            1, // device id
+            them.store.get_local_registration_id().await.unwrap(),
+            1.into(), // device id
             pre_key_info,
             signed_pre_key_id,
             their_signed_pre_key_pair.public_key,
             their_signed_pre_key_signature.into_vec(),
             *them
                 .store
-                .get_identity_key_pair(None)
+                .get_identity_key_pair()
                 .await
                 .unwrap()
                 .identity_key(),
@@ -94,8 +93,8 @@ impl Participant {
             &mut self.store.session_store,
             &mut self.store.identity_store,
             &their_pre_key_bundle,
+            SystemTime::UNIX_EPOCH,
             rng,
-            None,
         )
         .await
         .unwrap();
@@ -103,18 +102,18 @@ impl Participant {
 
     async fn send_message(&mut self, them: &mut Self, rng: &mut (impl Rng + CryptoRng)) {
         info!("{}: sending message", self.name);
-        if self
+        if !self
             .store
-            .load_session(&them.address, None)
+            .load_session(&them.address)
             .await
             .unwrap()
-            .map(|session| !session.has_current_session_state())
-            .unwrap_or(true)
+            .and_then(|session| session.has_usable_sender_chain(SystemTime::UNIX_EPOCH).ok())
+            .unwrap_or(false)
         {
             self.process_pre_key(them, rng.gen_bool(0.75), rng).await;
         }
 
-        let length = rng.gen_range(0, 140);
+        let length = rng.gen_range(0..140);
         let mut buffer = vec![0; length];
         rng.fill_bytes(&mut buffer);
 
@@ -123,7 +122,7 @@ impl Participant {
             &them.address,
             &mut self.store.session_store,
             &mut self.store.identity_store,
-            None,
+            SystemTime::UNIX_EPOCH,
         )
         .await
         .unwrap();
@@ -156,8 +155,8 @@ impl Participant {
                 &mut self.store.identity_store,
                 &mut self.store.pre_key_store,
                 &mut self.store.signed_pre_key_store,
+                &mut self.store.kyber_pre_key_store,
                 rng,
-                None,
             )
             .await
             .unwrap();
@@ -167,11 +166,11 @@ impl Participant {
     }
 
     async fn archive_session(&mut self, their_address: &ProtocolAddress) {
-        if let Some(mut session) = self.store.load_session(their_address, None).await.unwrap() {
+        if let Some(mut session) = self.store.load_session(their_address).await.unwrap() {
             info!("{}: archiving session", self.name);
             session.archive_current_state().unwrap();
             self.store
-                .store_session(their_address, &session, None)
+                .store_session(their_address, &session)
                 .await
                 .unwrap();
             self.archive_count += 1;
@@ -188,7 +187,7 @@ fuzz_target!(|data: (u64, &[u8])| {
 
         let mut alice = Participant {
             name: "alice",
-            address: ProtocolAddress::new("+14151111111".to_owned(), 1),
+            address: ProtocolAddress::new("+14151111111".to_owned(), 1.into()),
             store: InMemSignalProtocolStore::new(
                 IdentityKeyPair::generate(&mut csprng),
                 csprng.gen(),
@@ -199,7 +198,7 @@ fuzz_target!(|data: (u64, &[u8])| {
         };
         let mut bob = Participant {
             name: "bob",
-            address: ProtocolAddress::new("+14151111112".to_owned(), 1),
+            address: ProtocolAddress::new("+14151111112".to_owned(), 1.into()),
             store: InMemSignalProtocolStore::new(
                 IdentityKeyPair::generate(&mut csprng),
                 csprng.gen(),

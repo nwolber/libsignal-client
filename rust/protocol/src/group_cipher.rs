@@ -3,20 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use crate::consts;
-use crate::crypto;
+use std::convert::TryFrom;
 
-use crate::{
-    CiphertextMessageType, Context, KeyPair, ProtocolAddress, Result, SenderKeyDistributionMessage,
-    SenderKeyMessage, SenderKeyRecord, SenderKeyStore, SignalProtocolError,
-};
+use rand::{CryptoRng, Rng};
+use uuid::Uuid;
 
 use crate::protocol::SENDERKEY_MESSAGE_CURRENT_VERSION;
 use crate::sender_keys::{SenderKeyState, SenderMessageKey};
-
-use rand::{CryptoRng, Rng};
-use std::convert::TryFrom;
-use uuid::Uuid;
+use crate::{
+    consts, CiphertextMessageType, KeyPair, ProtocolAddress, Result, SenderKeyDistributionMessage,
+    SenderKeyMessage, SenderKeyRecord, SenderKeyStore, SignalProtocolError,
+};
 
 pub async fn group_encrypt<R: Rng + CryptoRng>(
     sender_key_store: &mut dyn SenderKeyStore,
@@ -24,10 +21,9 @@ pub async fn group_encrypt<R: Rng + CryptoRng>(
     distribution_id: Uuid,
     plaintext: &[u8],
     csprng: &mut R,
-    ctx: Context,
 ) -> Result<SenderKeyMessage> {
     let mut record = sender_key_store
-        .load_sender_key(sender, distribution_id, ctx)
+        .load_sender_key(sender, distribution_id)
         .await?
         .ok_or(SignalProtocolError::NoSenderKeyState { distribution_id })?;
 
@@ -42,7 +38,7 @@ pub async fn group_encrypt<R: Rng + CryptoRng>(
     let message_keys = sender_chain_key.sender_message_key();
 
     let ciphertext =
-        crypto::aes_256_cbc_encrypt(plaintext, message_keys.cipher_key(), message_keys.iv())
+        signal_crypto::aes_256_cbc_encrypt(plaintext, message_keys.cipher_key(), message_keys.iv())
             .map_err(|_| {
                 log::error!(
                     "outgoing sender key state corrupt for distribution ID {}",
@@ -68,7 +64,7 @@ pub async fn group_encrypt<R: Rng + CryptoRng>(
     sender_key_state.set_sender_chain_key(sender_chain_key.next());
 
     sender_key_store
-        .store_sender_key(sender, distribution_id, &record, ctx)
+        .store_sender_key(sender, distribution_id, &record)
         .await?;
 
     Ok(skm)
@@ -129,7 +125,6 @@ pub async fn group_decrypt(
     skm_bytes: &[u8],
     sender_key_store: &mut dyn SenderKeyStore,
     sender: &ProtocolAddress,
-    ctx: Context,
 ) -> Result<Vec<u8>> {
     let skm = SenderKeyMessage::try_from(skm_bytes)?;
 
@@ -137,11 +132,11 @@ pub async fn group_decrypt(
     let chain_id = skm.chain_id();
 
     let mut record = sender_key_store
-        .load_sender_key(sender, skm.distribution_id(), ctx)
+        .load_sender_key(sender, skm.distribution_id())
         .await?
         .ok_or(SignalProtocolError::NoSenderKeyState { distribution_id })?;
 
-    let mut sender_key_state = match record.sender_key_state_for_chain_id(chain_id) {
+    let sender_key_state = match record.sender_key_state_for_chain_id(chain_id) {
         Some(state) => state,
         None => {
             log::error!(
@@ -168,15 +163,15 @@ pub async fn group_decrypt(
         return Err(SignalProtocolError::SignatureValidationFailed);
     }
 
-    let sender_key = get_sender_key(&mut sender_key_state, skm.iteration(), distribution_id)?;
+    let sender_key = get_sender_key(sender_key_state, skm.iteration(), distribution_id)?;
 
-    let plaintext = match crypto::aes_256_cbc_decrypt(
+    let plaintext = match signal_crypto::aes_256_cbc_decrypt(
         skm.ciphertext(),
         sender_key.cipher_key(),
         sender_key.iv(),
     ) {
         Ok(plaintext) => plaintext,
-        Err(crypto::DecryptionError::BadKeyOrIv) => {
+        Err(signal_crypto::DecryptionError::BadKeyOrIv) => {
             log::error!(
                 "incoming sender key state corrupt for {}, distribution ID {}, chain ID {}",
                 sender,
@@ -185,7 +180,7 @@ pub async fn group_decrypt(
             );
             return Err(SignalProtocolError::InvalidSenderKeySession { distribution_id });
         }
-        Err(crypto::DecryptionError::BadCiphertext(msg)) => {
+        Err(signal_crypto::DecryptionError::BadCiphertext(msg)) => {
             log::error!("sender key decryption failed: {}", msg);
             return Err(SignalProtocolError::InvalidMessage(
                 CiphertextMessageType::SenderKey,
@@ -195,7 +190,7 @@ pub async fn group_decrypt(
     };
 
     sender_key_store
-        .store_sender_key(sender, distribution_id, &record, ctx)
+        .store_sender_key(sender, distribution_id, &record)
         .await?;
 
     Ok(plaintext)
@@ -205,7 +200,6 @@ pub async fn process_sender_key_distribution_message(
     sender: &ProtocolAddress,
     skdm: &SenderKeyDistributionMessage,
     sender_key_store: &mut dyn SenderKeyStore,
-    ctx: Context,
 ) -> Result<()> {
     let distribution_id = skdm.distribution_id()?;
     log::info!(
@@ -216,7 +210,7 @@ pub async fn process_sender_key_distribution_message(
     );
 
     let mut sender_key_record = sender_key_store
-        .load_sender_key(sender, distribution_id, ctx)
+        .load_sender_key(sender, distribution_id)
         .await?
         .unwrap_or_else(SenderKeyRecord::new_empty);
 
@@ -229,7 +223,7 @@ pub async fn process_sender_key_distribution_message(
         None,
     );
     sender_key_store
-        .store_sender_key(sender, distribution_id, &sender_key_record, ctx)
+        .store_sender_key(sender, distribution_id, &sender_key_record)
         .await?;
     Ok(())
 }
@@ -239,10 +233,9 @@ pub async fn create_sender_key_distribution_message<R: Rng + CryptoRng>(
     distribution_id: Uuid,
     sender_key_store: &mut dyn SenderKeyStore,
     csprng: &mut R,
-    ctx: Context,
 ) -> Result<SenderKeyDistributionMessage> {
     let sender_key_record = sender_key_store
-        .load_sender_key(sender, distribution_id, ctx)
+        .load_sender_key(sender, distribution_id)
         .await?;
 
     let sender_key_record = match sender_key_record {
@@ -269,7 +262,7 @@ pub async fn create_sender_key_distribution_message<R: Rng + CryptoRng>(
                 Some(signing_key.private_key),
             );
             sender_key_store
-                .store_sender_key(sender, distribution_id, &record, ctx)
+                .store_sender_key(sender, distribution_id, &record)
                 .await?;
             record
         }

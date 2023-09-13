@@ -11,14 +11,10 @@ import ServerSecretParams from '../ServerSecretParams';
 import GroupPublicParams from '../groups/GroupPublicParams';
 
 import ExpiringProfileKeyCredentialResponse from './ExpiringProfileKeyCredentialResponse';
-import PniCredentialPresentation from './PniCredentialPresentation';
-import PniCredentialResponse from './PniCredentialResponse';
 import ProfileKeyCommitment from './ProfileKeyCommitment';
 import ProfileKeyCredentialPresentation from './ProfileKeyCredentialPresentation';
-import ProfileKeyCredentialResponse from './ProfileKeyCredentialResponse';
 import ProfileKeyCredentialRequest from './ProfileKeyCredentialRequest';
-
-import { UUIDType, fromUUID } from '../internal/UUIDUtil';
+import { Aci } from '../../Address';
 
 export default class ServerZkProfileOperations {
   serverSecretParams: ServerSecretParams;
@@ -27,41 +23,9 @@ export default class ServerZkProfileOperations {
     this.serverSecretParams = serverSecretParams;
   }
 
-  issueProfileKeyCredential(
-    profileKeyCredentialRequest: ProfileKeyCredentialRequest,
-    uuid: UUIDType,
-    profileKeyCommitment: ProfileKeyCommitment
-  ): ProfileKeyCredentialResponse {
-    const random = randomBytes(RANDOM_LENGTH);
-
-    return this.issueProfileKeyCredentialWithRandom(
-      random,
-      profileKeyCredentialRequest,
-      uuid,
-      profileKeyCommitment
-    );
-  }
-
-  issueProfileKeyCredentialWithRandom(
-    random: Buffer,
-    profileKeyCredentialRequest: ProfileKeyCredentialRequest,
-    uuid: UUIDType,
-    profileKeyCommitment: ProfileKeyCommitment
-  ): ProfileKeyCredentialResponse {
-    return new ProfileKeyCredentialResponse(
-      Native.ServerSecretParams_IssueProfileKeyCredentialDeterministic(
-        this.serverSecretParams.getContents(),
-        random,
-        profileKeyCredentialRequest.getContents(),
-        fromUUID(uuid),
-        profileKeyCommitment.getContents()
-      )
-    );
-  }
-
   issueExpiringProfileKeyCredential(
     profileKeyCredentialRequest: ProfileKeyCredentialRequest,
-    uuid: UUIDType,
+    userId: Aci,
     profileKeyCommitment: ProfileKeyCommitment,
     expirationInSeconds: number
   ): ExpiringProfileKeyCredentialResponse {
@@ -70,7 +34,7 @@ export default class ServerZkProfileOperations {
     return this.issueExpiringProfileKeyCredentialWithRandom(
       random,
       profileKeyCredentialRequest,
-      uuid,
+      userId,
       profileKeyCommitment,
       expirationInSeconds
     );
@@ -79,7 +43,7 @@ export default class ServerZkProfileOperations {
   issueExpiringProfileKeyCredentialWithRandom(
     random: Buffer,
     profileKeyCredentialRequest: ProfileKeyCredentialRequest,
-    uuid: UUIDType,
+    userId: Aci,
     profileKeyCommitment: ProfileKeyCommitment,
     expirationInSeconds: number
   ): ExpiringProfileKeyCredentialResponse {
@@ -88,45 +52,9 @@ export default class ServerZkProfileOperations {
         this.serverSecretParams.getContents(),
         random,
         profileKeyCredentialRequest.getContents(),
-        fromUUID(uuid),
+        userId.getServiceIdFixedWidthBinary(),
         profileKeyCommitment.getContents(),
         expirationInSeconds
-      )
-    );
-  }
-
-  issuePniCredential(
-    profileKeyCredentialRequest: ProfileKeyCredentialRequest,
-    aci: UUIDType,
-    pni: UUIDType,
-    profileKeyCommitment: ProfileKeyCommitment
-  ): PniCredentialResponse {
-    const random = randomBytes(RANDOM_LENGTH);
-
-    return this.issuePniCredentialWithRandom(
-      random,
-      profileKeyCredentialRequest,
-      aci,
-      pni,
-      profileKeyCommitment
-    );
-  }
-
-  issuePniCredentialWithRandom(
-    random: Buffer,
-    profileKeyCredentialRequest: ProfileKeyCredentialRequest,
-    aci: UUIDType,
-    pni: UUIDType,
-    profileKeyCommitment: ProfileKeyCommitment
-  ): PniCredentialResponse {
-    return new PniCredentialResponse(
-      Native.ServerSecretParams_IssuePniCredentialDeterministic(
-        this.serverSecretParams.getContents(),
-        random,
-        profileKeyCredentialRequest.getContents(),
-        fromUUID(aci),
-        fromUUID(pni),
-        profileKeyCommitment.getContents()
       )
     );
   }
@@ -141,17 +69,6 @@ export default class ServerZkProfileOperations {
       groupPublicParams.getContents(),
       profileKeyCredentialPresentation.getContents(),
       Math.floor(now.getTime() / 1000)
-    );
-  }
-
-  verifyPniCredentialPresentation(
-    groupPublicParams: GroupPublicParams,
-    presentation: PniCredentialPresentation
-  ): void {
-    Native.ServerSecretParams_VerifyPniCredentialPresentation(
-      this.serverSecretParams.getContents(),
-      groupPublicParams.getContents(),
-      presentation.getContents()
     );
   }
 }

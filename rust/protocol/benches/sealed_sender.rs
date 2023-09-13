@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::time::SystemTime;
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures_util::FutureExt;
 use libsignal_protocol::*;
@@ -16,8 +18,10 @@ mod support;
 pub fn v1(c: &mut Criterion) {
     let mut rng = OsRng;
 
-    let alice_address = ProtocolAddress::new("9d0652a3-dcc3-4d11-975f-74d61598733f".to_owned(), 1);
-    let bob_address = ProtocolAddress::new("796abedb-ca4e-4f18-8803-1fde5b921f9f".to_owned(), 1);
+    let alice_address =
+        ProtocolAddress::new("9d0652a3-dcc3-4d11-975f-74d61598733f".to_owned(), 1.into());
+    let bob_address =
+        ProtocolAddress::new("796abedb-ca4e-4f18-8803-1fde5b921f9f".to_owned(), 1.into());
 
     let mut alice_store = support::test_in_memory_protocol_store().expect("brand new store");
     let mut bob_store = support::test_in_memory_protocol_store().expect("brand new store");
@@ -32,8 +36,8 @@ pub fn v1(c: &mut Criterion) {
         &mut alice_store.session_store,
         &mut alice_store.identity_store,
         &bob_pre_key_bundle,
+        SystemTime::now(),
         &mut rng,
-        None,
     )
     .now_or_never()
     .expect("sync")
@@ -52,7 +56,7 @@ pub fn v1(c: &mut Criterion) {
         alice_address.name().to_string(),
         None,
         *alice_store
-            .get_identity_key_pair(None)
+            .get_identity_key_pair()
             .now_or_never()
             .expect("sync")
             .expect("valid")
@@ -80,7 +84,6 @@ pub fn v1(c: &mut Criterion) {
             &bob_address,
             &usmc,
             &mut alice_store.identity_store,
-            None,
             &mut rng,
         )
         .now_or_never()
@@ -90,7 +93,7 @@ pub fn v1(c: &mut Criterion) {
     let encrypted = encrypt_it();
 
     let mut decrypt_it = || {
-        sealed_sender_decrypt_to_usmc(&encrypted, &mut bob_store.identity_store, None)
+        sealed_sender_decrypt_to_usmc(&encrypted, &mut bob_store.identity_store)
             .now_or_never()
             .expect("sync")
             .expect("valid")
@@ -104,8 +107,10 @@ pub fn v1(c: &mut Criterion) {
 pub fn v2(c: &mut Criterion) {
     let mut rng = OsRng;
 
-    let alice_address = ProtocolAddress::new("9d0652a3-dcc3-4d11-975f-74d61598733f".to_owned(), 1);
-    let bob_address = ProtocolAddress::new("796abedb-ca4e-4f18-8803-1fde5b921f9f".to_owned(), 1);
+    let alice_address =
+        ProtocolAddress::new("9d0652a3-dcc3-4d11-975f-74d61598733f".to_owned(), 1.into());
+    let bob_address =
+        ProtocolAddress::new("796abedb-ca4e-4f18-8803-1fde5b921f9f".to_owned(), 1.into());
 
     let mut alice_store = support::test_in_memory_protocol_store().expect("brand new store");
     let mut bob_store = support::test_in_memory_protocol_store().expect("brand new store");
@@ -120,8 +125,8 @@ pub fn v2(c: &mut Criterion) {
         &mut alice_store.session_store,
         &mut alice_store.identity_store,
         &bob_pre_key_bundle,
+        SystemTime::now(),
         &mut rng,
-        None,
     )
     .now_or_never()
     .expect("sync")
@@ -140,7 +145,7 @@ pub fn v2(c: &mut Criterion) {
         alice_address.name().to_string(),
         None,
         *alice_store
-            .get_identity_key_pair(None)
+            .get_identity_key_pair()
             .now_or_never()
             .expect("sync")
             .expect("valid")
@@ -172,7 +177,6 @@ pub fn v2(c: &mut Criterion) {
                 .expect("present"),
             &usmc,
             &mut alice_store.identity_store,
-            None,
             &mut rng,
         )
         .now_or_never()
@@ -188,7 +192,7 @@ pub fn v2(c: &mut Criterion) {
         .expect("at least one destination");
 
     let mut decrypt_it = || {
-        sealed_sender_decrypt_to_usmc(&incoming, &mut bob_store.identity_store, None)
+        sealed_sender_decrypt_to_usmc(&incoming, &mut bob_store.identity_store)
             .now_or_never()
             .expect("sync")
             .expect("valid")
@@ -198,10 +202,47 @@ pub fn v2(c: &mut Criterion) {
     c.bench_function("v2/encrypt", |b| b.iter(&mut encrypt_it));
     c.bench_function("v2/decrypt", |b| b.iter(&mut decrypt_it));
 
+    {
+        // Test new derivation, while we're still using the old one by default.
+        let mut encrypt_it = || {
+            sealed_sender_multi_recipient_encrypt_using_new_ephemeral_key_derivation(
+                &[&bob_address],
+                &alice_store
+                    .session_store
+                    .load_existing_sessions(&[&bob_address])
+                    .expect("present"),
+                &usmc,
+                &mut alice_store.identity_store,
+                &mut rng,
+            )
+            .now_or_never()
+            .expect("sync")
+            .expect("valid")
+        };
+        let outgoing = encrypt_it();
+
+        let incoming = sealed_sender_multi_recipient_fan_out(&outgoing)
+            .expect("valid")
+            .into_iter()
+            .next()
+            .expect("at least one destination");
+
+        let mut decrypt_it = || {
+            sealed_sender_decrypt_to_usmc(&incoming, &mut bob_store.identity_store)
+                .now_or_never()
+                .expect("sync")
+                .expect("valid")
+        };
+        assert_eq!(message, decrypt_it().contents().expect("valid"));
+
+        c.bench_function("v2/encrypt/new-derivation", |b| b.iter(&mut encrypt_it));
+        c.bench_function("v2/decrypt/new-derivation", |b| b.iter(&mut decrypt_it));
+    }
+
     // Fill out additional recipients.
     let mut recipients = vec![bob_address.clone()];
     while recipients.len() < 10 {
-        let next_address = ProtocolAddress::new(Uuid::from_bytes(rng.gen()).to_string(), 1);
+        let next_address = ProtocolAddress::new(Uuid::from_bytes(rng.gen()).to_string(), 1.into());
 
         let mut next_store = support::test_in_memory_protocol_store().expect("brand new store");
 
@@ -215,8 +256,8 @@ pub fn v2(c: &mut Criterion) {
             &mut alice_store.session_store,
             &mut alice_store.identity_store,
             &next_pre_key_bundle,
+            SystemTime::now(),
             &mut rng,
-            None,
         )
         .now_or_never()
         .expect("sync")
@@ -241,7 +282,6 @@ pub fn v2(c: &mut Criterion) {
                             .expect("present"),
                         &usmc,
                         &mut alice_store.identity_store,
-                        None,
                         &mut rng,
                     )
                     .now_or_never()
@@ -269,7 +309,6 @@ pub fn v2(c: &mut Criterion) {
                             .expect("present"),
                         &usmc,
                         &mut alice_store.identity_store,
-                        None,
                         &mut rng,
                     )
                     .now_or_never()

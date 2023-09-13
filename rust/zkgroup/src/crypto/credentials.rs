@@ -15,8 +15,9 @@ use crate::common::sho::*;
 use crate::common::simple_types::*;
 use crate::crypto::receipt_struct::ReceiptStruct;
 use crate::crypto::timestamp_struct::TimestampStruct;
-use crate::crypto::uid_struct;
-use crate::crypto::{profile_key_credential_request, receipt_credential_request, receipt_struct};
+use crate::crypto::{
+    profile_key_credential_request, receipt_credential_request, receipt_struct, uid_struct,
+};
 use crate::{
     NUM_AUTH_CRED_ATTRIBUTES, NUM_PROFILE_KEY_CRED_ATTRIBUTES, NUM_RECEIPT_CRED_ATTRIBUTES,
 };
@@ -29,7 +30,7 @@ lazy_static! {
 }
 
 const NUM_SUPPORTED_ATTRS: usize = 6;
-#[derive(Copy, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SystemParams {
     pub(crate) G_w: RistrettoPoint,
     pub(crate) G_wprime: RistrettoPoint,
@@ -124,58 +125,42 @@ impl<S: AttrScalars> PartialEq for KeyPair<S> {
 }
 impl<S: AttrScalars> Eq for KeyPair<S> {}
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicKey {
     pub(crate) C_W: RistrettoPoint,
     pub(crate) I: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthCredential {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
     pub(crate) V: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthCredentialWithPni {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
     pub(crate) V: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+/// Unused, kept only because ServerSecretParams contains a KeyPair<ProfileKeyCredential>.
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileKeyCredential {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
     pub(crate) V: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BlindedProfileKeyCredentialWithSecretNonce {
-    pub(crate) rprime: Scalar,
-    pub(crate) t: Scalar,
-    pub(crate) U: RistrettoPoint,
-    pub(crate) S1: RistrettoPoint,
-    pub(crate) S2: RistrettoPoint,
-}
-
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BlindedProfileKeyCredential {
-    pub(crate) t: Scalar,
-    pub(crate) U: RistrettoPoint,
-    pub(crate) S1: RistrettoPoint,
-    pub(crate) S2: RistrettoPoint,
-}
-
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpiringProfileKeyCredential {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
     pub(crate) V: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlindedExpiringProfileKeyCredentialWithSecretNonce {
     pub(crate) rprime: Scalar,
     pub(crate) t: Scalar,
@@ -184,7 +169,7 @@ pub struct BlindedExpiringProfileKeyCredentialWithSecretNonce {
     pub(crate) S2: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlindedExpiringProfileKeyCredential {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
@@ -192,37 +177,22 @@ pub struct BlindedExpiringProfileKeyCredential {
     pub(crate) S2: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+/// Unused, kept only because ServerSecretParams contains a KeyPair<PniCredential>.
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PniCredential {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
     pub(crate) V: RistrettoPoint,
 }
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BlindedPniCredentialWithSecretNonce {
-    pub(crate) rprime: Scalar,
-    pub(crate) t: Scalar,
-    pub(crate) U: RistrettoPoint,
-    pub(crate) S1: RistrettoPoint,
-    pub(crate) S2: RistrettoPoint,
-}
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BlindedPniCredential {
-    pub(crate) t: Scalar,
-    pub(crate) U: RistrettoPoint,
-    pub(crate) S1: RistrettoPoint,
-    pub(crate) S2: RistrettoPoint,
-}
-
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptCredential {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
     pub(crate) V: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlindedReceiptCredentialWithSecretNonce {
     pub(crate) rprime: Scalar,
     pub(crate) t: Scalar,
@@ -231,7 +201,7 @@ pub struct BlindedReceiptCredentialWithSecretNonce {
     pub(crate) S2: RistrettoPoint,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlindedReceiptCredential {
     pub(crate) t: Scalar,
     pub(crate) U: RistrettoPoint,
@@ -471,32 +441,6 @@ impl KeyPair<AuthCredentialWithPni> {
     }
 }
 
-impl KeyPair<ProfileKeyCredential> {
-    pub fn create_blinded_profile_key_credential(
-        &self,
-        uid: uid_struct::UidStruct,
-        public_key: profile_key_credential_request::PublicKey,
-        ciphertext: profile_key_credential_request::Ciphertext,
-        sho: &mut Sho,
-    ) -> BlindedProfileKeyCredentialWithSecretNonce {
-        let M = [uid.M1, uid.M2];
-
-        let (t, U, Vprime) = self.credential_core(&M, sho);
-        let rprime = sho.get_scalar();
-        let R1 = rprime * RISTRETTO_BASEPOINT_POINT;
-        let R2 = rprime * public_key.Y + Vprime;
-        let S1 = R1 + (self.y[3] * ciphertext.D1) + (self.y[4] * ciphertext.E1);
-        let S2 = R2 + (self.y[3] * ciphertext.D2) + (self.y[4] * ciphertext.E2);
-        BlindedProfileKeyCredentialWithSecretNonce {
-            rprime,
-            t,
-            U,
-            S1,
-            S2,
-        }
-    }
-}
-
 impl KeyPair<ExpiringProfileKeyCredential> {
     pub fn create_blinded_expiring_profile_key_credential(
         &self,
@@ -521,34 +465,6 @@ impl KeyPair<ExpiringProfileKeyCredential> {
         let S1 = R1 + (self.y[3] * ciphertext.D1) + (self.y[4] * ciphertext.E1);
         let S2 = R2 + (self.y[3] * ciphertext.D2) + (self.y[4] * ciphertext.E2);
         BlindedExpiringProfileKeyCredentialWithSecretNonce {
-            rprime,
-            t,
-            U,
-            S1,
-            S2,
-        }
-    }
-}
-
-impl KeyPair<PniCredential> {
-    pub fn create_blinded_pni_credential(
-        &self,
-        uid: uid_struct::UidStruct,
-        pni: uid_struct::UidStruct,
-        public_key: profile_key_credential_request::PublicKey,
-        ciphertext: profile_key_credential_request::Ciphertext,
-        sho: &mut Sho,
-    ) -> BlindedPniCredentialWithSecretNonce {
-        let M = [uid.M1, uid.M2];
-
-        let (t, U, Vprime) = self.credential_core(&M, sho);
-        let Vprime_with_pni = Vprime + (self.y[5] * pni.M1) + (self.y[6] * pni.M2);
-        let rprime = sho.get_scalar();
-        let R1 = rprime * RISTRETTO_BASEPOINT_POINT;
-        let R2 = rprime * public_key.Y + Vprime_with_pni;
-        let S1 = R1 + (self.y[3] * ciphertext.D1) + (self.y[4] * ciphertext.E1);
-        let S2 = R2 + (self.y[3] * ciphertext.D2) + (self.y[4] * ciphertext.E2);
-        BlindedPniCredentialWithSecretNonce {
             rprime,
             t,
             U,
@@ -587,33 +503,11 @@ impl KeyPair<ReceiptCredential> {
     }
 }
 
-impl BlindedProfileKeyCredentialWithSecretNonce {
-    pub fn get_blinded_profile_key_credential(&self) -> BlindedProfileKeyCredential {
-        BlindedProfileKeyCredential {
-            t: self.t,
-            U: self.U,
-            S1: self.S1,
-            S2: self.S2,
-        }
-    }
-}
-
 impl BlindedExpiringProfileKeyCredentialWithSecretNonce {
     pub fn get_blinded_expiring_profile_key_credential(
         &self,
     ) -> BlindedExpiringProfileKeyCredential {
         BlindedExpiringProfileKeyCredential {
-            t: self.t,
-            U: self.U,
-            S1: self.S1,
-            S2: self.S2,
-        }
-    }
-}
-
-impl BlindedPniCredentialWithSecretNonce {
-    pub fn get_blinded_pni_credential(&self) -> BlindedPniCredential {
-        BlindedPniCredential {
             t: self.t,
             U: self.U,
             S1: self.S1,
@@ -654,7 +548,8 @@ mod tests {
 
         let uid_bytes = TEST_ARRAY_16;
         let redemption_time = 37;
-        let uid = uid_struct::UidStruct::new(uid_bytes);
+        let aci = libsignal_protocol::Aci::from_uuid_bytes(uid_bytes);
+        let uid = uid_struct::UidStruct::from_service_id(aci.into());
         let credential = keypair.create_auth_credential(uid, redemption_time, &mut sho);
         let proof = proofs::AuthCredentialIssuanceProof::new(
             keypair,

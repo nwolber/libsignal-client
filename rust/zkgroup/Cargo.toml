@@ -6,34 +6,49 @@
 [package]
 name = "zkgroup"
 version = "0.9.0"
-authors = ["Trevor Perrin <trevp@signal.org>"]
-edition = "2018"
+authors = ["Signal Messenger LLC"]
+edition = "2021"
 description = "A zero-knowledge group library"
 license = "AGPL-3.0-only"
 
 [dependencies]
+libsignal-protocol = { path = "../protocol" }
 poksho = { path = "../poksho" }
+signal-crypto = { path = "../crypto" }
+zkcredential = { path = "../zkcredential" }
 
 bincode = "1.2.1"
 serde = { version = "1.0.106", features = ["derive"] }
-sha2 = "0.9.0"
+sha2 = "0.10.0"
 hex = "0.4.0"
-aead = "0.4.0"
-aes-gcm-siv = "0.10.0"
+aes-gcm-siv = "0.11.1"
 displaydoc = "0.2"
 lazy_static = "1.4.0"
+subtle = "2.3"
+uuid = "1.1.2"
+
+# For generation
+base64 = { version = "0.21", optional = true }
+rand = { version = "0.8", optional = true }
 
 [dependencies.curve25519-dalek]
+git = 'https://github.com/signalapp/curve25519-dalek'
+tag = 'signal-curve25519-4.0.0'
 features = ["serde"]
-version = "3.0.0"
-git = "https://github.com/signalapp/curve25519-dalek.git"
-branch = "lizard2"
-
-# Below is for benchmarking:
+version = "4.0.0"
 
 [dev-dependencies]
-criterion = "0.3.1"
+# For benchmarking
+criterion = "0.5"
 
 [[bench]]
 name = "zkgroup_benchmarks"
 harness = false
+
+[[bin]]
+name = "generate_server_params"
+required-features = ["base64", "rand"]
+
+[[bin]]
+name = "generate_generic_server_params"
+required-features = ["base64", "rand"]

@@ -17,14 +17,12 @@ public class SenderKeyDistributionMessage: NativeHandleOwner {
                             context: StoreContext) throws {
         var result: OpaquePointer?
         try sender.withNativeHandle { senderHandle in
-            try context.withOpaquePointer { context in
-                try withUnsafePointer(to: distributionId.uuid) { distributionId in
-                    try withSenderKeyStore(store) {
-                        try checkError(signal_sender_key_distribution_message_create(&result,
-                                                                                     senderHandle,
-                                                                                     distributionId,
-                                                                                     $0, context))
-                    }
+            try withUnsafePointer(to: distributionId.uuid) { distributionId in
+                try withSenderKeyStore(store, context) {
+                    try checkError(signal_sender_key_distribution_message_create(&result,
+                                                                                 senderHandle,
+                                                                                 distributionId,
+                                                                                 $0))
                 }
             }
         }
@@ -83,7 +81,7 @@ public class SenderKeyDistributionMessage: NativeHandleOwner {
         return withNativeHandle { nativeHandle in
             failOnError {
                 try invokeFnReturningArray {
-                    signal_sender_key_distribution_message_serialize($0, $1, nativeHandle)
+                    signal_sender_key_distribution_message_serialize($0, nativeHandle)
                 }
             }
         }
@@ -93,7 +91,7 @@ public class SenderKeyDistributionMessage: NativeHandleOwner {
         return withNativeHandle { nativeHandle in
             failOnError {
                 try invokeFnReturningArray {
-                    signal_sender_key_distribution_message_get_chain_key($0, $1, nativeHandle)
+                    signal_sender_key_distribution_message_get_chain_key($0, nativeHandle)
                 }
             }
         }

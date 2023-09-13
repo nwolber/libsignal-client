@@ -11,7 +11,7 @@ use libc::{c_char, c_uchar, c_uint, size_t};
 use libsignal_bridge::ffi::*;
 use libsignal_protocol::*;
 use std::convert::TryFrom;
-use std::ffi::{c_void, CString};
+use std::ffi::CString;
 use std::panic::AssertUnwindSafe;
 
 pub mod logging;
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn signal_free_string(buf: *const c_char) {
     if buf.is_null() {
         return;
     }
-    CString::from_raw(buf as _);
+    drop(CString::from_raw(buf as _));
 }
 
 #[no_mangle]
@@ -37,7 +37,10 @@ pub unsafe extern "C" fn signal_free_buffer(buf: *const c_uchar, buf_len: size_t
     if buf.is_null() {
         return;
     }
-    Box::from_raw(std::slice::from_raw_parts_mut(buf as *mut c_uchar, buf_len));
+    drop(Box::from_raw(std::slice::from_raw_parts_mut(
+        buf as *mut c_uchar,
+        buf_len,
+    )));
 }
 
 #[no_mangle]
@@ -50,7 +53,7 @@ pub unsafe extern "C" fn signal_error_get_message(
             return Err(SignalFfiError::NullPointer);
         }
         let msg = format!("{}", *err);
-        write_cstr_to(out, Ok(msg))
+        write_result_to(out, msg)
     })();
 
     match result {
@@ -146,8 +149,7 @@ pub unsafe extern "C" fn signal_identitykeypair_deserialize(
 
 #[no_mangle]
 pub unsafe extern "C" fn signal_sealed_session_cipher_decrypt(
-    out: *mut *const c_uchar,
-    out_len: *mut size_t,
+    out: *mut OwnedBufferOf<c_uchar>,
     sender_e164: *mut *const c_char,
     sender_uuid: *mut *const c_char,
     sender_device_id: *mut u32,
@@ -161,9 +163,9 @@ pub unsafe extern "C" fn signal_sealed_session_cipher_decrypt(
     identity_store: *const FfiIdentityKeyStoreStruct,
     prekey_store: *const FfiPreKeyStoreStruct,
     signed_prekey_store: *const FfiSignedPreKeyStoreStruct,
-    ctx: *mut c_void,
 ) -> *mut SignalFfiError {
     run_ffi_safe(|| {
+        let mut kyber_pre_key_store = InMemKyberPreKeyStore::new();
         let ctext = ctext.as_slice()?;
         let trust_root = native_handle_cast::<PublicKey>(trust_root)?;
         let mut identity_store = identity_store.as_ref().ok_or(SignalFfiError::NullPointer)?;
@@ -182,19 +184,20 @@ pub unsafe extern "C" fn signal_sealed_session_cipher_decrypt(
             timestamp,
             local_e164,
             local_uuid,
-            local_device_id,
+            local_device_id.into(),
             &mut identity_store,
             &mut session_store,
             &mut prekey_store,
             &mut signed_prekey_store,
-            Some(ctx),
+            &mut kyber_pre_key_store,
         )
         .now_or_never()
         .expect("synchronous")?;
 
-        write_optional_cstr_to(sender_e164, Ok(decrypted.sender_e164))?;
-        write_cstr_to(sender_uuid, Ok(decrypted.sender_uuid))?;
-        write_result_to(sender_device_id, decrypted.device_id)?;
-        write_bytearray_to(out, out_len, Some(decrypted.message))
+        write_result_to(sender_e164, decrypted.sender_e164)?;
+        write_result_to(sender_uuid, decrypted.sender_uuid)?;
+        write_result_to(sender_device_id, u32::from(decrypted.device_id))?;
+        write_result_to(out, decrypted.message)?;
+        Ok(())
     })
 }

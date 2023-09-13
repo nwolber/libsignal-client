@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::time::SystemTime;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use futures_util::FutureExt;
 use libsignal_protocol::*;
@@ -14,18 +16,18 @@ mod support;
 pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolError> {
     let (alice_session_record, bob_session_record) = support::initialize_sessions_v3()?;
 
-    let alice_address = ProtocolAddress::new("+14159999999".to_owned(), 1);
-    let bob_address = ProtocolAddress::new("+14158888888".to_owned(), 1);
+    let alice_address = ProtocolAddress::new("+14159999999".to_owned(), 1.into());
+    let bob_address = ProtocolAddress::new("+14158888888".to_owned(), 1.into());
 
     let mut alice_store = support::test_in_memory_protocol_store()?;
     let mut bob_store = support::test_in_memory_protocol_store()?;
 
     alice_store
-        .store_session(&bob_address, &alice_session_record, None)
+        .store_session(&bob_address, &alice_session_record)
         .now_or_never()
         .expect("sync")?;
     bob_store
-        .store_session(&alice_address, &bob_session_record, None)
+        .store_session(&alice_address, &bob_session_record)
         .now_or_never()
         .expect("sync")?;
 
@@ -70,13 +72,13 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
 
     // Archive on Alice's side...
     let mut state = alice_store
-        .load_session(&bob_address, None)
+        .load_session(&bob_address)
         .now_or_never()
         .expect("sync")?
         .expect("already decrypted successfully");
     state.archive_current_state()?;
     alice_store
-        .store_session(&bob_address, &state, None)
+        .store_session(&bob_address, &state)
         .now_or_never()
         .expect("sync")?;
 
@@ -85,7 +87,7 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
 
     let bob_signed_pre_key_public = bob_signed_pre_key_pair.public_key.serialize();
     let bob_signed_pre_key_signature = bob_store
-        .get_identity_key_pair(None)
+        .get_identity_key_pair()
         .now_or_never()
         .expect("sync")?
         .private_key()
@@ -95,16 +97,16 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
 
     let bob_pre_key_bundle = PreKeyBundle::new(
         bob_store
-            .get_local_registration_id(None)
+            .get_local_registration_id()
             .now_or_never()
             .expect("sync")?,
-        1,                 // device id
-        None,              // pre key
-        signed_pre_key_id, // signed pre key id
+        1.into(),                 // device id
+        None,                     // pre key
+        signed_pre_key_id.into(), // signed pre key id
         bob_signed_pre_key_pair.public_key,
         bob_signed_pre_key_signature.to_vec(),
         *bob_store
-            .get_identity_key_pair(None)
+            .get_identity_key_pair()
             .now_or_never()
             .expect("sync")?
             .identity_key(),
@@ -112,14 +114,13 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
 
     bob_store
         .save_signed_pre_key(
-            signed_pre_key_id,
+            signed_pre_key_id.into(),
             &SignedPreKeyRecord::new(
-                signed_pre_key_id,
+                signed_pre_key_id.into(),
                 /*timestamp*/ 42,
                 &bob_signed_pre_key_pair,
                 &bob_signed_pre_key_signature,
             ),
-            None,
         )
         .now_or_never()
         .expect("sync")?;
@@ -134,8 +135,8 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
         &mut alice_store.session_store,
         &mut alice_store.identity_store,
         &bob_pre_key_bundle,
+        SystemTime::now(),
         &mut OsRng,
-        None,
     )
     .now_or_never()
     .expect("sync")?;
@@ -183,18 +184,18 @@ pub fn session_encrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolErr
 pub fn session_encrypt_decrypt_result(c: &mut Criterion) -> Result<(), SignalProtocolError> {
     let (alice_session_record, bob_session_record) = support::initialize_sessions_v3()?;
 
-    let alice_address = ProtocolAddress::new("+14159999999".to_owned(), 1);
-    let bob_address = ProtocolAddress::new("+14158888888".to_owned(), 1);
+    let alice_address = ProtocolAddress::new("+14159999999".to_owned(), 1.into());
+    let bob_address = ProtocolAddress::new("+14158888888".to_owned(), 1.into());
 
     let mut alice_store = support::test_in_memory_protocol_store()?;
     let mut bob_store = support::test_in_memory_protocol_store()?;
 
     alice_store
-        .store_session(&bob_address, &alice_session_record, None)
+        .store_session(&bob_address, &alice_session_record)
         .now_or_never()
         .expect("sync")?;
     bob_store
-        .store_session(&alice_address, &bob_session_record, None)
+        .store_session(&alice_address, &bob_session_record)
         .now_or_never()
         .expect("sync")?;
 
@@ -236,12 +237,12 @@ pub fn session_encrypt_decrypt_result(c: &mut Criterion) -> Result<(), SignalPro
     Ok(())
 }
 
-pub fn session_encrypt(mut c: &mut Criterion) {
-    session_encrypt_result(&mut c).expect("success");
+pub fn session_encrypt(c: &mut Criterion) {
+    session_encrypt_result(c).expect("success");
 }
 
-pub fn session_encrypt_decrypt(mut c: &mut Criterion) {
-    session_encrypt_decrypt_result(&mut c).expect("success");
+pub fn session_encrypt_decrypt(c: &mut Criterion) {
+    session_encrypt_decrypt_result(c).expect("success");
 }
 
 criterion_group!(benches, session_encrypt, session_encrypt_decrypt);

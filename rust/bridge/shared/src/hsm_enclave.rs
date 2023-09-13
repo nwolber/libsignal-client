@@ -5,14 +5,16 @@
 
 use std::panic::RefUnwindSafe;
 
-use ::attest::client_connection;
-use ::attest::hsm_enclave;
+use ::attest::{client_connection, hsm_enclave};
 use libsignal_bridge_macros::*;
 
 use self::hsm_enclave::Result;
 use crate::support::*;
 use crate::*;
 
+// It's okay to have a large enum because this type will be boxed for bridging after it's been
+// created.
+#[allow(clippy::large_enum_variant)]
 pub enum HsmEnclaveClient {
     ConnectionEstablishment(hsm_enclave::ClientConnectionEstablishment),
     Connection(client_connection::ClientConnection),
@@ -92,7 +94,7 @@ fn HsmEnclaveClient_New(
     HsmEnclaveClient::new(trusted_public_key, trusted_code_hashes)
 }
 
-bridge_get_buffer!(
+bridge_get!(
     HsmEnclaveClient::initial_request as InitialRequest -> &[u8]
 );
 
@@ -104,7 +106,7 @@ fn HsmEnclaveClient_CompleteHandshake(
     cli.complete_handshake(handshake_received)
 }
 
-#[bridge_fn_buffer]
+#[bridge_fn]
 fn HsmEnclaveClient_EstablishedSend(
     cli: &mut HsmEnclaveClient,
     plaintext_to_send: &[u8],
@@ -112,7 +114,7 @@ fn HsmEnclaveClient_EstablishedSend(
     cli.established_send(plaintext_to_send)
 }
 
-#[bridge_fn_buffer]
+#[bridge_fn]
 fn HsmEnclaveClient_EstablishedRecv(
     cli: &mut HsmEnclaveClient,
     received_ciphertext: &[u8],

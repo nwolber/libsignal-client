@@ -42,30 +42,22 @@ class PublicAPITests: TestCaseBase {
         XCTAssertEqual(derived, okm)
     }
 
-    func testAesGcmSiv() {
-        let ptext: [UInt8] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-        let expected_ctext: [UInt8] = [0x1d, 0xe2, 0x29, 0x67, 0x23, 0x7a, 0x81, 0x32, 0x91, 0x21, 0x3f, 0x26, 0x7e, 0x3b, 0x45, 0x2f, 0x02, 0xd0, 0x1a, 0xe3, 0x3e, 0x4e, 0xc8, 0x54]
-        let ad: [UInt8] = [0x01]
-        let key: [UInt8] = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-        let nonce: [UInt8] = [0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-
-        let gcm_siv = try! Aes256GcmSiv(key)
-
-        let ctext = try! gcm_siv.encrypt(ptext, nonce, ad)
-        XCTAssertEqual(ctext, expected_ctext)
-
-        let recovered = try! gcm_siv.decrypt(ctext, nonce, ad)
-        XCTAssertEqual(recovered, ptext)
-
-        XCTAssertThrowsError(try gcm_siv.decrypt(ptext, nonce, ad))
-        XCTAssertThrowsError(try gcm_siv.decrypt(ctext, ad, nonce))
-    }
-
     func testAddress() {
         let addr = try! ProtocolAddress(name: "addr1", deviceId: 5)
         XCTAssertEqual(addr.name, "addr1")
         XCTAssertEqual(addr.deviceId, 5)
+    }
+
+    func testAddressRoundTripServiceId() {
+        let uuid = UUID()
+        let aci = Aci(fromUUID: uuid)
+        let pni = Pni(fromUUID: uuid)
+
+        let aciAddr = ProtocolAddress(aci, deviceId: 1)
+        let pniAddr = ProtocolAddress(pni, deviceId: 1)
+        XCTAssertNotEqual(aciAddr, pniAddr)
+        XCTAssertEqual(aci, aciAddr.serviceId)
+        XCTAssertEqual(pni, pniAddr.serviceId)
     }
 
     func testPkOperations() {
@@ -152,6 +144,9 @@ class PublicAPITests: TestCaseBase {
         XCTAssertEqual(aliceFingerprint.scannable.encoding, ALICE_SCANNABLE_FINGERPRINT_V1)
         XCTAssertEqual(bobFingerprint.scannable.encoding, BOB_SCANNABLE_FINGERPRINT_V1)
 
+        XCTAssertTrue(try! bobFingerprint.scannable.compare(againstEncoding: aliceFingerprint.scannable.encoding))
+        XCTAssertTrue(try! aliceFingerprint.scannable.compare(againstEncoding: bobFingerprint.scannable.encoding))
+
         // testVectorsVersion2
 
         let aliceFingerprint2 = try! generator.create(version: VERSION_2,
@@ -172,6 +167,12 @@ class PublicAPITests: TestCaseBase {
         XCTAssertEqual(aliceFingerprint2.scannable.encoding, ALICE_SCANNABLE_FINGERPRINT_V2)
         XCTAssertEqual(bobFingerprint2.scannable.encoding, BOB_SCANNABLE_FINGERPRINT_V2)
 
+        XCTAssertTrue(try! bobFingerprint2.scannable.compare(againstEncoding: aliceFingerprint2.scannable.encoding))
+        XCTAssertTrue(try! aliceFingerprint2.scannable.compare(againstEncoding: bobFingerprint2.scannable.encoding))
+
+        XCTAssertThrowsError(try bobFingerprint2.scannable.compare(againstEncoding: aliceFingerprint.scannable.encoding))
+        XCTAssertThrowsError(try bobFingerprint.scannable.compare(againstEncoding: aliceFingerprint2.scannable.encoding))
+
         // testMismatchingFingerprints
 
         let mitmIdentityKey = PrivateKey.generate().publicKey
@@ -191,8 +192,8 @@ class PublicAPITests: TestCaseBase {
         XCTAssertNotEqual(aliceFingerprintM.displayable.formatted,
                           bobFingerprintM.displayable.formatted)
 
-        XCTAssertEqual(try! bobFingerprintM.scannable.compare(against: aliceFingerprintM.scannable), false)
-        XCTAssertEqual(try! aliceFingerprintM.scannable.compare(against: bobFingerprintM.scannable), false)
+        XCTAssertFalse(try! bobFingerprintM.scannable.compare(againstEncoding: aliceFingerprintM.scannable.encoding))
+        XCTAssertFalse(try! aliceFingerprintM.scannable.compare(againstEncoding: bobFingerprintM.scannable.encoding))
 
         XCTAssertEqual(aliceFingerprintM.displayable.formatted.count, 60)
 
@@ -215,8 +216,11 @@ class PublicAPITests: TestCaseBase {
         XCTAssertNotEqual(aliceFingerprintI.displayable.formatted,
                           bobFingerprintI.displayable.formatted)
 
-        XCTAssertEqual(try! bobFingerprintI.scannable.compare(against: aliceFingerprintI.scannable), false)
-        XCTAssertEqual(try! aliceFingerprintI.scannable.compare(against: bobFingerprintI.scannable), false)
+        XCTAssertFalse(try! bobFingerprintI.scannable.compare(againstEncoding: aliceFingerprintI.scannable.encoding))
+        XCTAssertFalse(try! aliceFingerprintI.scannable.compare(againstEncoding: bobFingerprintI.scannable.encoding))
+
+        // Test bad fingerprint
+        XCTAssertThrowsError(try aliceFingerprintI.scannable.compare(againstEncoding: []))
     }
 
     func testGroupCipher() {
@@ -242,6 +246,37 @@ class PublicAPITests: TestCaseBase {
         let b_ptext = try! groupDecrypt(a_ctext, from: sender, store: b_store, context: NullContext())
 
         XCTAssertEqual(b_ptext, [1, 2, 3])
+    }
+
+    func testGroupCipherWithContext() {
+        class ContextUsingStore: InMemorySignalProtocolStore {
+            var expectedContext: StoreContext & AnyObject
+
+            init(expectedContext: StoreContext & AnyObject) {
+                self.expectedContext = expectedContext
+                super.init()
+            }
+
+            override func loadSenderKey(from sender: ProtocolAddress, distributionId: UUID, context: StoreContext) throws -> SenderKeyRecord? {
+                XCTAssertIdentical(expectedContext, context as AnyObject)
+                return try super.loadSenderKey(from: sender, distributionId: distributionId, context: context)
+            }
+        }
+
+        class ContextWithIdentity: StoreContext {}
+
+        let sender = try! ProtocolAddress(name: "+14159999111", deviceId: 4)
+        let distribution_id = UUID(uuidString: "d1d1d1d1-7000-11eb-b32a-33b8a8a487a6")!
+
+        let a_store = ContextUsingStore(expectedContext: ContextWithIdentity())
+
+        let skdm = try! SenderKeyDistributionMessage(from: sender, distributionId: distribution_id, store: a_store, context: a_store.expectedContext)
+
+        let skdm_bits = skdm.serialize()
+
+        _ = try! SenderKeyDistributionMessage(bytes: skdm_bits)
+
+        _ = try! groupEncrypt([1, 2, 3], from: sender, distributionId: distribution_id, store: a_store, context: a_store.expectedContext).serialize()
     }
 
     func testSenderCertificates() {
@@ -271,6 +306,7 @@ class PublicAPITests: TestCaseBase {
         XCTAssertEqual(senderCert.publicKey.serialize().count, 33)
 
         XCTAssertEqual(senderCert.senderUuid, "9d0652a3-dcc3-4d11-975f-74d61598733f")
+        XCTAssertEqual(senderCert.senderAci.serviceIdString, "9d0652a3-dcc3-4d11-975f-74d61598733f")
         XCTAssertEqual(senderCert.senderE164, Optional("+14152222222"))
 
         let serverCert = senderCert.serverCertificate
@@ -278,6 +314,22 @@ class PublicAPITests: TestCaseBase {
         XCTAssertEqual(serverCert.keyId, 1)
         XCTAssertEqual(serverCert.publicKey.serialize().count, 33)
         XCTAssertEqual(serverCert.signatureBytes.count, 64)
+    }
+
+    func testSenderCertificateGetSenderAci() {
+        let aci = Aci(fromUUID: UUID())
+        let trustRoot = IdentityKeyPair.generate()
+        let serverKeys = IdentityKeyPair.generate()
+        let serverCert = try! ServerCertificate(keyId: 1, publicKey: serverKeys.publicKey, trustRoot: trustRoot.privateKey)
+        let senderAddr = try! SealedSenderAddress(aci: aci, deviceId: 1)
+        let senderCert = try! SenderCertificate(sender: senderAddr,
+                                                publicKey: IdentityKeyPair.generate().publicKey,
+                                                expiration: 31337,
+                                                signerCertificate: serverCert,
+                                                signerKey: serverKeys.privateKey)
+
+        XCTAssertNil(senderCert.senderE164)
+        XCTAssertEqual(aci, senderCert.senderAci)
     }
 
     private func testRoundTrip<Handle>(_ initial: Handle, serialize: (Handle) -> [UInt8], deserialize: ([UInt8]) throws -> Handle, line: UInt = #line) {
@@ -306,19 +358,21 @@ class PublicAPITests: TestCaseBase {
     }
 
     func testDeviceTransferKey() {
-        let deviceKey = DeviceTransferKey.generate()
+        for keyFormat in KeyFormat.allCases {
+            let deviceKey = DeviceTransferKey.generate(formattedAs: keyFormat)
 
-        /*
-         Anything encoded in an ASN.1 SEQUENCE starts with 0x30 when encoded
-         as DER. (This test could be better.)
-         */
-        let key = deviceKey.privateKeyMaterial()
-        XCTAssert(key.count > 0)
-        XCTAssertEqual(key[0], 0x30)
+            /*
+             Anything encoded in an ASN.1 SEQUENCE starts with 0x30 when encoded
+             as DER. (This test could be better.)
+             */
+            let key = deviceKey.privateKeyMaterial()
+            XCTAssert(key.count > 0)
+            XCTAssertEqual(key[0], 0x30)
 
-        let cert = deviceKey.generateCertificate("name", 30)
-        XCTAssert(cert.count > 0)
-        XCTAssertEqual(cert[0], 0x30)
+            let cert = deviceKey.generateCertificate("name", 30)
+            XCTAssert(cert.count > 0)
+            XCTAssertEqual(cert[0], 0x30)
+        }
     }
 
     func testSignAlternateIdentity() {
@@ -326,20 +380,5 @@ class PublicAPITests: TestCaseBase {
         let secondary = IdentityKeyPair.generate()
         let signature = secondary.signAlternateIdentity(primary.identityKey)
         XCTAssert(try! secondary.identityKey.verifyAlternateIdentity(primary.identityKey, signature: signature))
-    }
-
-    static var allTests: [(String, (PublicAPITests) -> () throws -> Void)] {
-        return [
-            ("testAddreses", testAddress),
-            ("testFingerprint", testFingerprint),
-            ("testPkOperations", testPkOperations),
-            ("testHkdfSimple", testHkdfSimple),
-            ("testHkdfUsingRFCExample", testHkdfUsingRFCExample),
-            ("testAesGcmSiv", testAesGcmSiv),
-            ("testGroupCipher", testGroupCipher),
-            ("testSenderCertifications", testSenderCertificates),
-            ("testSerializationRoundTrip", testSerializationRoundTrip),
-            ("testSignAlternateIdentity", testSignAlternateIdentity),
-        ]
     }
 }

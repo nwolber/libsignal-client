@@ -14,6 +14,15 @@ cd "${SCRIPT_DIR}"/..
 export CARGO_PROFILE_RELEASE_DEBUG=1 # enable line tables
 export CARGO_PROFILE_RELEASE_LTO=fat # use fat LTO to reduce binary size
 export CFLAGS="-DOPENSSL_SMALL ${CFLAGS:-}" # use small BoringSSL curve tables to reduce binary size
+export RUSTFLAGS="--cfg aes_armv8 --cfg polyval_armv8 ${RUSTFLAGS:-}" # Enable ARMv8 cryptography acceleration when available
+
+# Work around cc crate bug with Catalyst targets
+export CFLAGS_aarch64_apple_ios_macabi="--target=arm64-apple-ios-macabi ${CFLAGS}"
+export CFLAGS_x86_64_apple_ios_macabi="--target=x86_64-apple-ios-macabi ${CFLAGS}"
+
+if [[ "${CARGO_BUILD_TARGET:-}" =~ -ios(-sim|-macabi)?$ ]]; then
+  export IPHONEOS_DEPLOYMENT_TARGET=13
+fi
 
 usage() {
   cat >&2 <<END
@@ -108,6 +117,7 @@ FFI_HEADER_PATH=swift/Sources/SignalFfi/signal_ffi.h
 
 if [[ -n "${SHOULD_CBINDGEN}" ]]; then
   check_cbindgen
+  cbindgen --version
   if [[ -n "${CBINDGEN_VERIFY}" ]]; then
     echo diff -u "${FFI_HEADER_PATH}" "<(cbindgen -q ${RELEASE_BUILD:+--profile release} rust/bridge/ffi)"
     if ! diff -u "${FFI_HEADER_PATH}"  <(cbindgen -q ${RELEASE_BUILD:+--profile release} rust/bridge/ffi); then

@@ -13,17 +13,11 @@ import GroupSecretParams from '../groups/GroupSecretParams';
 
 import ExpiringProfileKeyCredential from './ExpiringProfileKeyCredential';
 import ExpiringProfileKeyCredentialResponse from './ExpiringProfileKeyCredentialResponse';
-import PniCredential from './PniCredential';
-import PniCredentialPresentation from './PniCredentialPresentation';
-import PniCredentialRequestContext from './PniCredentialRequestContext';
-import PniCredentialResponse from './PniCredentialResponse';
 import ProfileKey from './ProfileKey';
-import ProfileKeyCredential from './ProfileKeyCredential';
 import ProfileKeyCredentialPresentation from './ProfileKeyCredentialPresentation';
 import ProfileKeyCredentialRequestContext from './ProfileKeyCredentialRequestContext';
-import ProfileKeyCredentialResponse from './ProfileKeyCredentialResponse';
 
-import { UUIDType, fromUUID } from '../internal/UUIDUtil';
+import { Aci } from '../../Address';
 
 export default class ClientZkProfileOperations {
   serverPublicParams: ServerPublicParams;
@@ -33,74 +27,29 @@ export default class ClientZkProfileOperations {
   }
 
   createProfileKeyCredentialRequestContext(
-    uuid: UUIDType,
+    userId: Aci,
     profileKey: ProfileKey
   ): ProfileKeyCredentialRequestContext {
     const random = randomBytes(RANDOM_LENGTH);
 
     return this.createProfileKeyCredentialRequestContextWithRandom(
       random,
-      uuid,
+      userId,
       profileKey
     );
   }
 
   createProfileKeyCredentialRequestContextWithRandom(
     random: Buffer,
-    uuid: UUIDType,
+    userId: Aci,
     profileKey: ProfileKey
   ): ProfileKeyCredentialRequestContext {
     return new ProfileKeyCredentialRequestContext(
       Native.ServerPublicParams_CreateProfileKeyCredentialRequestContextDeterministic(
         this.serverPublicParams.getContents(),
         random,
-        fromUUID(uuid),
+        userId.getServiceIdFixedWidthBinary(),
         profileKey.getContents()
-      )
-    );
-  }
-
-  createPniCredentialRequestContext(
-    aci: UUIDType,
-    pni: UUIDType,
-    profileKey: ProfileKey
-  ): PniCredentialRequestContext {
-    const random = randomBytes(RANDOM_LENGTH);
-
-    return this.createPniCredentialRequestContextWithRandom(
-      random,
-      aci,
-      pni,
-      profileKey
-    );
-  }
-
-  createPniCredentialRequestContextWithRandom(
-    random: Buffer,
-    aci: UUIDType,
-    pni: UUIDType,
-    profileKey: ProfileKey
-  ): PniCredentialRequestContext {
-    return new PniCredentialRequestContext(
-      Native.ServerPublicParams_CreatePniCredentialRequestContextDeterministic(
-        this.serverPublicParams.getContents(),
-        random,
-        fromUUID(aci),
-        fromUUID(pni),
-        profileKey.getContents()
-      )
-    );
-  }
-
-  receiveProfileKeyCredential(
-    profileKeyCredentialRequestContext: ProfileKeyCredentialRequestContext,
-    profileKeyCredentialResponse: ProfileKeyCredentialResponse
-  ): ProfileKeyCredential {
-    return new ProfileKeyCredential(
-      Native.ServerPublicParams_ReceiveProfileKeyCredential(
-        this.serverPublicParams.getContents(),
-        profileKeyCredentialRequestContext.getContents(),
-        profileKeyCredentialResponse.getContents()
       )
     );
   }
@@ -116,47 +65,6 @@ export default class ClientZkProfileOperations {
         profileKeyCredentialRequestContext.getContents(),
         profileKeyCredentialResponse.getContents(),
         Math.floor(now.getTime() / 1000)
-      )
-    );
-  }
-
-  receivePniCredential(
-    requestContext: PniCredentialRequestContext,
-    response: PniCredentialResponse
-  ): PniCredential {
-    return new PniCredential(
-      Native.ServerPublicParams_ReceivePniCredential(
-        this.serverPublicParams.getContents(),
-        requestContext.getContents(),
-        response.getContents()
-      )
-    );
-  }
-
-  createProfileKeyCredentialPresentation(
-    groupSecretParams: GroupSecretParams,
-    profileKeyCredential: ProfileKeyCredential
-  ): ProfileKeyCredentialPresentation {
-    const random = randomBytes(RANDOM_LENGTH);
-
-    return this.createProfileKeyCredentialPresentationWithRandom(
-      random,
-      groupSecretParams,
-      profileKeyCredential
-    );
-  }
-
-  createProfileKeyCredentialPresentationWithRandom(
-    random: Buffer,
-    groupSecretParams: GroupSecretParams,
-    profileKeyCredential: ProfileKeyCredential
-  ): ProfileKeyCredentialPresentation {
-    return new ProfileKeyCredentialPresentation(
-      Native.ServerPublicParams_CreateProfileKeyCredentialPresentationDeterministic(
-        this.serverPublicParams.getContents(),
-        random,
-        groupSecretParams.getContents(),
-        profileKeyCredential.getContents()
       )
     );
   }
@@ -185,34 +93,6 @@ export default class ClientZkProfileOperations {
         random,
         groupSecretParams.getContents(),
         profileKeyCredential.getContents()
-      )
-    );
-  }
-
-  createPniCredentialPresentation(
-    groupSecretParams: GroupSecretParams,
-    credential: PniCredential
-  ): PniCredentialPresentation {
-    const random = randomBytes(RANDOM_LENGTH);
-
-    return this.createPniCredentialPresentationWithRandom(
-      random,
-      groupSecretParams,
-      credential
-    );
-  }
-
-  createPniCredentialPresentationWithRandom(
-    random: Buffer,
-    groupSecretParams: GroupSecretParams,
-    credential: PniCredential
-  ): PniCredentialPresentation {
-    return new PniCredentialPresentation(
-      Native.ServerPublicParams_CreatePniCredentialPresentationDeterministic(
-        this.serverPublicParams.getContents(),
-        random,
-        groupSecretParams.getContents(),
-        credential.getContents()
       )
     );
   }
