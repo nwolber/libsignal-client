@@ -22,7 +22,7 @@
 // https://doc.rust-lang.org/rustdoc/what-to-include.html for background.
 // #![warn(missing_docs)]
 
-mod address;
+pub mod address;
 mod consts;
 pub mod crypto;
 mod curve;
