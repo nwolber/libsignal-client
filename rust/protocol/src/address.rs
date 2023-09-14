@@ -7,6 +7,7 @@
 
 //! Types for identifying an individual Signal client instance.
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[cfg(doc)]
@@ -16,7 +17,17 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
 /// Known types of [ServiceId].
-#[derive(Clone, Copy, Hash, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive)]
+#[derive(
+    Clone,
+    Copy,
+    Hash,
+    PartialEq,
+    Eq,
+    num_enum::IntoPrimitive,
+    num_enum::TryFromPrimitive,
+    Serialize,
+    Deserialize,
+)]
 #[repr(u8)]
 pub enum ServiceIdKind {
     /// An [Aci].
@@ -49,7 +60,7 @@ pub struct WrongKindOfServiceIdError {
 /// A service ID with a known type.
 ///
 /// `RAW_KIND` is a raw [ServiceIdKind] (eventually Rust will allow enums as generic parameters).
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpecificServiceId<const RAW_KIND: u8>(Uuid);
 
 impl<const KIND: u8> SpecificServiceId<KIND> {
@@ -156,7 +167,7 @@ pub type ServiceIdFixedWidthBinaryBytes = [u8; 17];
 ///
 /// Conceptually this is a UUID in a particular "namespace" representing a particular way to reach a
 /// user on the Signal service.
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceId {
     /// An ACI
     Aci(Aci),

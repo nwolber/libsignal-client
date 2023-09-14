@@ -30,7 +30,7 @@ x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
 hex = "0.4"
 log = "0.4"
 num_enum = "0.6.1"
-uuid = "1.1.2"
+uuid = { version = "1.1.2", features = ["serde"] }
 displaydoc = "0.2"
 thiserror = "1.0.30"
 pqcrypto-kyber = { version = "0.7.6", default-features = false, features = [
