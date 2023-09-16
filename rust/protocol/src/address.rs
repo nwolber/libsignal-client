@@ -167,7 +167,7 @@ pub type ServiceIdFixedWidthBinaryBytes = [u8; 17];
 ///
 /// Conceptually this is a UUID in a particular "namespace" representing a particular way to reach a
 /// user on the Signal service.
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub enum ServiceId {
     /// An ACI
     Aci(Aci),
@@ -275,6 +275,27 @@ impl ServiceId {
             ServiceId::Aci(aci) => aci.into(),
             ServiceId::Pni(pni) => pni.into(),
         }
+    }
+}
+
+impl Serialize for ServiceId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.service_id_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ServiceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).and_then(|s| {
+            ServiceId::parse_from_service_id_string(&s)
+                .ok_or_else(|| serde::de::Error::custom("deserialize invalid ServiceId"))
+        })
     }
 }
 
