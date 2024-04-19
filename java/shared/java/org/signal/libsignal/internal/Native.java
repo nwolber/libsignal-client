@@ -260,6 +260,7 @@ public final class Native {
   public static native long GroupSendCredentialResponse_DefaultExpirationBasedOnCurrentTime();
   public static native byte[] GroupSendCredentialResponse_IssueDeterministic(byte[] concatenatedGroupMemberCiphertexts, byte[] requester, long expiration, byte[] serverParams, byte[] randomness);
   public static native byte[] GroupSendCredentialResponse_Receive(byte[] responseBytes, byte[] groupMembers, byte[] localAci, long now, byte[] serverParams, byte[] groupParams);
+  public static native byte[] GroupSendCredentialResponse_ReceiveWithCiphertexts(byte[] responseBytes, byte[] concatenatedGroupMemberCiphertexts, byte[] requester, long now, byte[] serverParams, byte[] groupParams);
 
   public static native void GroupSendCredential_CheckValidContents(byte[] paramsBytes);
   public static native byte[] GroupSendCredential_PresentDeterministic(byte[] credentialBytes, byte[] serverParams, byte[] randomness);
@@ -618,6 +619,7 @@ public final class Native {
 
   public static native String Username_CandidatesFrom(String nickname, int minLen, int maxLen);
   public static native byte[] Username_Hash(String username);
+  public static native byte[] Username_HashFromParts(String nickname, String discriminator, int minLen, int maxLen);
   public static native byte[] Username_Proof(String username, byte[] randomness);
   public static native void Username_Verify(byte[] proof, byte[] hash);
 
@@ -628,5 +630,5 @@ public final class Native {
   public static native long ValidatingMac_Initialize(byte[] key, int chunkSize, byte[] digests);
   public static native int ValidatingMac_Update(long mac, byte[] bytes, int offset, int length);
 
-  public static native void WebpSanitizer_Sanitize(InputStream input, long len);
+  public static native void WebpSanitizer_Sanitize(InputStream input);
 }

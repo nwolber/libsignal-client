@@ -18,11 +18,30 @@ interface LookupResponseEntry {
   readonly pni: string | undefined;
 }
 
+interface SealedSenderMultiRecipientMessageRecipient {
+  deviceIds: number[];
+  registrationIds: number[];
+  rangeOffset: number;
+  rangeLen: number;
+}
+
+interface SealedSenderMultiRecipientMessage {
+  recipientMap: {
+    [serviceId: string]: SealedSenderMultiRecipientMessageRecipient;
+  };
+  excludedRecipients: string[];
+  offsetOfSharedData: number;
+}
+
 export abstract class IdentityKeyStore {
   _getIdentityKey(): Promise<PrivateKey>;
   _getLocalRegistrationId(): Promise<number>;
   _saveIdentity(name: ProtocolAddress, key: PublicKey): Promise<boolean>;
-  _isTrustedIdentity(name: ProtocolAddress, key: PublicKey, sending: boolean): Promise<boolean>;
+  _isTrustedIdentity(
+    name: ProtocolAddress,
+    key: PublicKey,
+    sending: boolean
+  ): Promise<boolean>;
   _getIdentity(name: ProtocolAddress): Promise<PublicKey | null>;
 }
 
@@ -38,19 +57,32 @@ export abstract class PreKeyStore {
 }
 
 export abstract class SignedPreKeyStore {
-  _saveSignedPreKey(signedPreKeyId: number, record: SignedPreKeyRecord): Promise<void>;
+  _saveSignedPreKey(
+    signedPreKeyId: number,
+    record: SignedPreKeyRecord
+  ): Promise<void>;
   _getSignedPreKey(signedPreKeyId: number): Promise<SignedPreKeyRecord>;
 }
 
 export abstract class KyberPreKeyStore {
-  _saveKyberPreKey(kyberPreKeyId: number, record: KyberPreKeyRecord): Promise<void>;
+  _saveKyberPreKey(
+    kyberPreKeyId: number,
+    record: KyberPreKeyRecord
+  ): Promise<void>;
   _getKyberPreKey(kyberPreKeyId: number): Promise<KyberPreKeyRecord>;
   _markKyberPreKeyUsed(kyberPreKeyId: number): Promise<void>;
 }
 
 export abstract class SenderKeyStore {
-  _saveSenderKey(sender: ProtocolAddress, distributionId: Uuid, record: SenderKeyRecord): Promise<void>;
-  _getSenderKey(sender: ProtocolAddress, distributionId: Uuid): Promise<SenderKeyRecord | null>;
+  _saveSenderKey(
+    sender: ProtocolAddress,
+    distributionId: Uuid,
+    record: SenderKeyRecord
+  ): Promise<void>;
+  _getSenderKey(
+    sender: ProtocolAddress,
+    distributionId: Uuid
+  ): Promise<SenderKeyRecord | null>;
 }
 
 export abstract class InputStream {
@@ -58,11 +90,10 @@ export abstract class InputStream {
   _skip(amount: number): Promise<void>;
 }
 
-export abstract class SyncInputStream extends Buffer {
-}
+export abstract class SyncInputStream extends Buffer {}
 
 interface Wrapper<T> {
-  readonly _nativeHandle: T
+  readonly _nativeHandle: T;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -165,6 +196,7 @@ export function GroupSendCredentialResponse_CheckValidContents(responseBytes: Bu
 export function GroupSendCredentialResponse_DefaultExpirationBasedOnCurrentTime(): Timestamp;
 export function GroupSendCredentialResponse_IssueDeterministic(concatenatedGroupMemberCiphertexts: Buffer, requester: Serialized<UuidCiphertext>, expiration: Timestamp, serverParams: Serialized<ServerSecretParams>, randomness: Buffer): Buffer;
 export function GroupSendCredentialResponse_Receive(responseBytes: Buffer, groupMembers: Buffer, localAci: Buffer, now: Timestamp, serverParams: Serialized<ServerPublicParams>, groupParams: Serialized<GroupSecretParams>): Buffer;
+export function GroupSendCredentialResponse_ReceiveWithCiphertexts(responseBytes: Buffer, concatenatedGroupMemberCiphertexts: Buffer, requester: Serialized<UuidCiphertext>, now: Timestamp, serverParams: Serialized<ServerPublicParams>, groupParams: Serialized<GroupSecretParams>): Buffer;
 export function GroupSendCredential_CheckValidContents(paramsBytes: Buffer): void;
 export function GroupSendCredential_PresentDeterministic(credentialBytes: Buffer, serverParams: Serialized<ServerPublicParams>, randomness: Buffer): Buffer;
 export function HKDF_DeriveSecrets(outputLength: number, ikm: Buffer, label: Buffer | null, salt: Buffer | null): Buffer;
@@ -280,6 +312,7 @@ export function SealedSenderDecryptionResult_GetDeviceId(obj: Wrapper<SealedSend
 export function SealedSenderDecryptionResult_GetSenderE164(obj: Wrapper<SealedSenderDecryptionResult>): string | null;
 export function SealedSenderDecryptionResult_GetSenderUuid(obj: Wrapper<SealedSenderDecryptionResult>): string;
 export function SealedSenderDecryptionResult_Message(obj: Wrapper<SealedSenderDecryptionResult>): Buffer;
+export function SealedSenderMultiRecipientMessage_Parse(buffer: Buffer): SealedSenderMultiRecipientMessage;
 export function SealedSender_DecryptMessage(message: Buffer, trustRoot: Wrapper<PublicKey>, timestamp: Timestamp, localE164: string | null, localUuid: string, localDeviceId: number, sessionStore: SessionStore, identityStore: IdentityKeyStore, prekeyStore: PreKeyStore, signedPrekeyStore: SignedPreKeyStore, kyberPrekeyStore: KyberPreKeyStore): Promise<SealedSenderDecryptionResult>;
 export function SealedSender_DecryptToUsmc(ctext: Buffer, identityStore: IdentityKeyStore): Promise<UnidentifiedSenderMessageContent>;
 export function SealedSender_Encrypt(destination: Wrapper<ProtocolAddress>, content: Wrapper<UnidentifiedSenderMessageContent>, identityKeyStore: IdentityKeyStore): Promise<Buffer>;
@@ -423,13 +456,14 @@ export function UsernameLink_Create(username: string, entropy: Buffer | null): B
 export function UsernameLink_DecryptUsername(entropy: Buffer, encryptedUsername: Buffer): string;
 export function Username_CandidatesFrom(nickname: string, minLen: number, maxLen: number): string;
 export function Username_Hash(username: string): Buffer;
+export function Username_HashFromParts(nickname: string, discriminator: string, minLen: number, maxLen: number): Buffer;
 export function Username_Proof(username: string, randomness: Buffer): Buffer;
 export function Username_Verify(proof: Buffer, hash: Buffer): void;
 export function UuidCiphertext_CheckValidContents(buffer: Buffer): void;
 export function ValidatingMac_Finalize(mac: Wrapper<ValidatingMac>): number;
 export function ValidatingMac_Initialize(key: Buffer, chunkSize: number, digests: Buffer): ValidatingMac;
 export function ValidatingMac_Update(mac: Wrapper<ValidatingMac>, bytes: Buffer, offset: number, length: number): number;
-export function WebpSanitizer_Sanitize(input: SyncInputStream, len: Buffer): void;
+export function WebpSanitizer_Sanitize(input: SyncInputStream): void;
 export function initLogger(maxLevel: LogLevel, callback: (level: LogLevel, target: string, file: string | null, line: number | null, message: string) => void): void
 interface Aes256GcmSiv { readonly __type: unique symbol; }
 interface AuthCredential { readonly __type: unique symbol; }

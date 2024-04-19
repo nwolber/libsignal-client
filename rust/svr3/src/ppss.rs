@@ -10,8 +10,7 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::Scalar;
 use displaydoc::Display;
 use hkdf::Hkdf;
-use rand::{CryptoRng, Rng};
-use serde::{Deserialize, Serialize};
+use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 use std::convert::TryInto;
 use subtle::ConstantTimeEq;
@@ -25,6 +24,8 @@ pub enum PPSSError {
     InvalidCommitment,
     /// OPRF server output must encode canonical Ristretto points.
     BadPointEncoding,
+    /// {0}
+    LengthMismatch(&'static str),
 }
 
 impl std::error::Error for PPSSError {}
@@ -45,7 +46,7 @@ fn arr_xor_assign<const N: usize>(src: &[u8; N], acc: &mut [u8; N]) {
     }
 }
 
-fn create_xor_keyshares<R: Rng + CryptoRng>(
+fn create_xor_keyshares<R: CryptoRngCore>(
     secret: &Secret256,
     n: usize,
     rng: &mut R,
@@ -90,13 +91,14 @@ fn prepare_oprf_input(context: &'static str, server_id: u64, input: &str) -> Vec
     oprf_input_bytes
 }
 
-fn oprf_session_from_inputs(
+fn oprf_session_from_inputs<R: CryptoRngCore>(
     context: &'static str,
     server_id: u64,
     input: &str,
+    rng: &mut R,
 ) -> Result<OPRFSession, OPRFError> {
     let oprf_input = prepare_oprf_input(context, server_id, input);
-    let (blind, blinded_elt) = oprf::client::blind(&oprf_input)?;
+    let (blind, blinded_elt) = oprf::client::blind(&oprf_input, rng)?;
     Ok(OPRFSession {
         server_id,
         blind,
@@ -110,14 +112,15 @@ fn oprf_session_from_inputs(
 /// # Errors
 /// Returns `OPRFError::BlindError` if a computed blinded element turns out to be the identity.
 /// This is would happen if the OPRF input were constructed so that it hashed to the identity.
-pub fn begin_oprfs(
+pub fn begin_oprfs<R: CryptoRngCore>(
     context: &'static str,
     server_ids: &[u64],
     input: &str,
+    rng: &mut R,
 ) -> Result<Vec<OPRFSession>, OPRFError> {
     server_ids
         .iter()
-        .map(|sid| oprf_session_from_inputs(context, *sid, input))
+        .map(|sid| oprf_session_from_inputs(context, *sid, input, rng))
         .collect()
 }
 
@@ -155,7 +158,7 @@ pub fn finalize_oprfs(
 
 // Password Protected Secret Sharing (PPSS) functions
 /// A `MaskedShareSet` contains the information needed to restore a secret using a password.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct MaskedShareSet {
     pub server_ids: Vec<u64>,
     pub masked_shares: Vec<KeyShare>,
@@ -200,14 +203,19 @@ fn derive_key_and_bits_from_secret(secret: &Secret256, context: &'static str) ->
 // Initialize a PPSS session
 /// After evaluating OPRFs on a list of servers to get `oprf_outputs`, call `backup_secret` to create a
 /// password-protected backup of the secret.
-pub fn backup_secret<R: Rng + CryptoRng>(
+pub fn backup_secret<R: CryptoRngCore>(
     context: &'static str,
     password: &[u8],
     server_ids: Vec<u64>,
     oprf_outputs: Vec<[u8; 64]>,
     secret: &Secret256,
     rng: &mut R,
-) -> MaskedShareSet {
+) -> Result<MaskedShareSet, PPSSError> {
+    if server_ids.len() != oprf_outputs.len() {
+        return Err(PPSSError::LengthMismatch(
+            "Number of OPRF outputs does not match that of server ids",
+        ));
+    }
     let shares = create_xor_keyshares(secret, oprf_outputs.len(), rng);
     let masked_shares: Vec<[u8; 32]> = shares
         .iter()
@@ -222,11 +230,11 @@ pub fn backup_secret<R: Rng + CryptoRng>(
     let r = &r_and_k[..32];
     let commitment = compute_commitment(context, password, shares, &masked_shares, r);
 
-    MaskedShareSet {
+    Ok(MaskedShareSet {
         server_ids,
         masked_shares,
         commitment,
-    }
+    })
 }
 
 /// Recover a secret with a PPSS share set. The `oprf_outputs` should be the result
@@ -234,7 +242,7 @@ pub fn backup_secret<R: Rng + CryptoRng>(
 /// `finalize_oprfs` should match the order of the `server_ids` in `masked_shareset`.
 ///
 /// # Errors
-/// Returns `PPSSError::InvalidCommittment` when the reconstructed secret does not pass
+/// Returns `PPSSError::InvalidCommitment` when the reconstructed secret does not pass
 /// integrity validation.
 ///
 pub fn restore_secret(
@@ -243,6 +251,11 @@ pub fn restore_secret(
     oprf_outputs: Vec<[u8; 64]>,
     masked_shareset: MaskedShareSet,
 ) -> Result<(Secret256, Key), PPSSError> {
+    if oprf_outputs.len() != masked_shareset.masked_shares.len() {
+        return Err(PPSSError::LengthMismatch(
+            "Number of OPRF outputs does not match that of masked shares",
+        ));
+    }
     let keyshares: Vec<[u8; 32]> = masked_shareset
         .masked_shares
         .iter()
@@ -326,7 +339,7 @@ mod tests {
         let server_ids = vec![4u64, 1, 6];
         let oprf_servers = OPRFServerSet::new(&server_ids);
         // get the blinds - they are in order of server_id
-        let oprf_init_sessions = begin_oprfs(CONTEXT, &server_ids, password).unwrap();
+        let oprf_init_sessions = begin_oprfs(CONTEXT, &server_ids, password, &mut rng).unwrap();
 
         // eval the oprfs
         let eval_elt_bytes: Vec<[u8; 32]> = oprf_init_sessions
@@ -343,11 +356,12 @@ mod tests {
             oprf_outputs,
             &secret,
             &mut rng,
-        );
+        )
+        .unwrap();
 
         // Now reconstruct
         let oprf_restore_sessions =
-            begin_oprfs(CONTEXT, &masked_shareset.server_ids, password).unwrap();
+            begin_oprfs(CONTEXT, &masked_shareset.server_ids, password, &mut rng).unwrap();
 
         // eval the oprfs
         let restore_eval_elt_bytes: Vec<[u8; 32]> = oprf_restore_sessions
@@ -364,10 +378,33 @@ mod tests {
             restore_oprf_outputs,
             masked_shareset,
         )
-        .expect("valid committment");
+        .expect("valid commitment");
         assert_eq!(secret, restored_secret);
 
         let r_and_k = derive_key_and_bits_from_secret(&secret, CONTEXT);
         assert_eq!(&r_and_k[32..64], &restored_key);
+    }
+
+    #[test]
+    fn backup_length_mismatch() {
+        let mut rng = rand_core::OsRng;
+        let secret = [0; 32];
+        assert!(matches!(
+            backup_secret(CONTEXT, b"password", vec![42], vec![], &secret, &mut rng),
+            Err(PPSSError::LengthMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn restore_length_mismatch() {
+        let share_set = MaskedShareSet {
+            server_ids: vec![42],
+            masked_shares: vec![[0u8; 32]],
+            commitment: [1u8; 32],
+        };
+        assert!(matches!(
+            restore_secret(CONTEXT, b"password", vec![], share_set),
+            Err(PPSSError::LengthMismatch(_))
+        ));
     }
 }

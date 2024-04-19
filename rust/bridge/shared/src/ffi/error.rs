@@ -31,6 +31,7 @@ pub enum SignalFfiError {
     ZkGroupVerificationFailure(ZkGroupVerificationFailure),
     ZkGroupDeserializationFailure(ZkGroupDeserializationFailure),
     UsernameError(UsernameError),
+    UsernameProofError(usernames::ProofVerificationFailure),
     UsernameLinkError(UsernameLinkError),
     Io(IoError),
     #[cfg(feature = "signal-media")]
@@ -62,6 +63,7 @@ impl fmt::Display for SignalFfiError {
             SignalFfiError::ZkGroupVerificationFailure(e) => write!(f, "{}", e),
             SignalFfiError::ZkGroupDeserializationFailure(e) => write!(f, "{}", e),
             SignalFfiError::UsernameError(e) => write!(f, "{}", e),
+            SignalFfiError::UsernameProofError(e) => write!(f, "{}", e),
             SignalFfiError::UsernameLinkError(e) => write!(f, "{}", e),
             SignalFfiError::Io(e) => write!(f, "IO error: {}", e),
             #[cfg(feature = "signal-media")]
@@ -135,6 +137,12 @@ impl From<UsernameError> for SignalFfiError {
     }
 }
 
+impl From<usernames::ProofVerificationFailure> for SignalFfiError {
+    fn from(e: usernames::ProofVerificationFailure) -> SignalFfiError {
+        SignalFfiError::UsernameProofError(e)
+    }
+}
+
 impl From<UsernameLinkError> for SignalFfiError {
     fn from(e: UsernameLinkError) -> SignalFfiError {
         SignalFfiError::UsernameLinkError(e)
@@ -193,10 +201,12 @@ pub struct CallbackError {
 }
 
 impl CallbackError {
-    /// Returns `None` if `value` is zero; otherwise, wraps the value in `Self`.
-    pub fn check(value: i32) -> Option<Self> {
-        let value = std::num::NonZeroI32::try_from(value).ok()?;
-        Some(Self { value })
+    /// Returns `Ok(())` if `value` is zero; otherwise, wraps the value in `Self` as an error.
+    pub fn check(value: i32) -> Result<(), Self> {
+        match std::num::NonZeroI32::try_from(value).ok() {
+            None => Ok(()),
+            Some(value) => Err(Self { value }),
+        }
     }
 }
 

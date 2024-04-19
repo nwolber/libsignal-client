@@ -26,9 +26,12 @@ pub fn Username_Proof(username: String, randomness: &[u8]) -> Result<Vec<u8>, Us
 }
 
 #[bridge_fn_void]
-pub fn Username_Verify(proof: &[u8], hash: &[u8]) -> Result<(), UsernameError> {
+pub fn Username_Verify(
+    proof: &[u8],
+    hash: &[u8],
+) -> Result<(), ::usernames::ProofVerificationFailure> {
     if hash.len() != 32 {
-        return Err(UsernameError::ProofVerificationFailure);
+        return Err(::usernames::ProofVerificationFailure);
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(hash);
@@ -44,6 +47,17 @@ pub fn Username_CandidatesFrom(
     let mut rng = rand::rngs::OsRng;
     let limits = NicknameLimits::new(min_len as usize, max_len as usize);
     Username::candidates_from(&mut rng, &nickname, limits).map(|names| names.join(","))
+}
+
+#[bridge_fn]
+pub fn Username_HashFromParts(
+    nickname: String,
+    discriminator: String,
+    min_len: u32,
+    max_len: u32,
+) -> Result<[u8; 32], UsernameError> {
+    let limits = NicknameLimits::new(min_len as usize, max_len as usize);
+    Username::from_parts(&nickname, &discriminator, limits).map(|un| un.hash())
 }
 
 #[bridge_fn(ffi = false)]

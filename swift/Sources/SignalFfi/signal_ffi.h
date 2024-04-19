@@ -168,12 +168,17 @@ typedef enum {
   SignalErrorCodeUsernameCannotBeEmpty = 120,
   SignalErrorCodeUsernameCannotStartWithDigit = 121,
   SignalErrorCodeUsernameMissingSeparator = 122,
-  SignalErrorCodeUsernameBadDiscriminator = 123,
-  SignalErrorCodeUsernameBadCharacter = 124,
+  SignalErrorCodeUsernameBadDiscriminatorCharacter = 123,
+  SignalErrorCodeUsernameBadNicknameCharacter = 124,
   SignalErrorCodeUsernameTooShort = 125,
   SignalErrorCodeUsernameTooLong = 126,
   SignalErrorCodeUsernameLinkInvalidEntropyDataLength = 127,
   SignalErrorCodeUsernameLinkInvalid = 128,
+  SignalErrorCodeUsernameDiscriminatorCannotBeEmpty = 140,
+  SignalErrorCodeUsernameDiscriminatorCannotBeZero = 141,
+  SignalErrorCodeUsernameDiscriminatorCannotBeSingleDigit = 142,
+  SignalErrorCodeUsernameDiscriminatorCannotHaveLeadingZeros = 143,
+  SignalErrorCodeUsernameDiscriminatorTooLarge = 144,
   SignalErrorCodeIoError = 130,
   SignalErrorCodeInvalidMediaInput = 131,
   SignalErrorCodeUnsupportedMediaInput = 132,
@@ -1185,6 +1190,8 @@ SignalFfiError *signal_group_send_credential_response_check_valid_contents(Signa
 
 SignalFfiError *signal_group_send_credential_response_receive(SignalOwnedBuffer *out, SignalBorrowedBuffer response_bytes, SignalBorrowedBuffer group_members, const SignalServiceIdFixedWidthBinaryBytes *local_aci, uint64_t now, const unsigned char (*server_params)[SignalSERVER_PUBLIC_PARAMS_LEN], const unsigned char (*group_params)[SignalGROUP_SECRET_PARAMS_LEN]);
 
+SignalFfiError *signal_group_send_credential_response_receive_with_ciphertexts(SignalOwnedBuffer *out, SignalBorrowedBuffer response_bytes, SignalBorrowedBuffer concatenated_group_member_ciphertexts, const unsigned char (*requester)[SignalUUID_CIPHERTEXT_LEN], uint64_t now, const unsigned char (*server_params)[SignalSERVER_PUBLIC_PARAMS_LEN], const unsigned char (*group_params)[SignalGROUP_SECRET_PARAMS_LEN]);
+
 SignalFfiError *signal_group_send_credential_check_valid_contents(SignalBorrowedBuffer params_bytes);
 
 SignalFfiError *signal_group_send_credential_present_deterministic(SignalOwnedBuffer *out, SignalBorrowedBuffer credential_bytes, const unsigned char (*server_params)[SignalSERVER_PUBLIC_PARAMS_LEN], const uint8_t (*randomness)[SignalRANDOMNESS_LEN]);
@@ -1239,6 +1246,8 @@ SignalFfiError *signal_username_verify(SignalBorrowedBuffer proof, SignalBorrowe
 
 SignalFfiError *signal_username_candidates_from(const char **out, const char *nickname, uint32_t min_len, uint32_t max_len);
 
+SignalFfiError *signal_username_hash_from_parts(uint8_t (*out)[32], const char *nickname, const char *discriminator, uint32_t min_len, uint32_t max_len);
+
 SignalFfiError *signal_username_link_create(SignalOwnedBuffer *out, const char *username, SignalBorrowedBuffer entropy);
 
 SignalFfiError *signal_username_link_decrypt_username(const char **out, SignalBorrowedBuffer entropy, SignalBorrowedBuffer encrypted_username);
@@ -1252,7 +1261,7 @@ SignalFfiError *signal_mp4_sanitizer_sanitize(SignalSanitizedMetadata **out, con
 #endif
 
 #if defined(SIGNAL_MEDIA_SUPPORTED)
-SignalFfiError *signal_webp_sanitizer_sanitize(bool *out, const SignalSyncInputStream *input, uint64_t len);
+SignalFfiError *signal_webp_sanitizer_sanitize(bool *out, const SignalSyncInputStream *input);
 #endif
 
 #if defined(SIGNAL_MEDIA_SUPPORTED)
