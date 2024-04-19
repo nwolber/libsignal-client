@@ -68,9 +68,9 @@ impl GroupSecretParams {
         let mut blob_key: AesKeyBytes = Default::default();
         group_id.copy_from_slice(&sho.squeeze(GROUP_IDENTIFIER_LEN)[..]);
         blob_key.copy_from_slice(&sho.squeeze(AES_KEY_LEN)[..]);
-        let uid_enc_key_pair = crypto::uid_encryption::KeyPair::derive_from(&mut sho);
+        let uid_enc_key_pair = crypto::uid_encryption::KeyPair::derive_from(sho.as_mut());
         let profile_key_enc_key_pair =
-            crypto::profile_key_encryption::KeyPair::derive_from(&mut sho);
+            crypto::profile_key_encryption::KeyPair::derive_from(sho.as_mut());
 
         Self {
             reserved: Default::default(),
@@ -93,8 +93,8 @@ impl GroupSecretParams {
     pub fn get_public_params(&self) -> GroupPublicParams {
         GroupPublicParams {
             reserved: Default::default(),
-            uid_enc_public_key: self.uid_enc_key_pair.get_public_key(),
-            profile_key_enc_public_key: self.profile_key_enc_key_pair.get_public_key(),
+            uid_enc_public_key: self.uid_enc_key_pair.public_key,
+            profile_key_enc_public_key: self.profile_key_enc_key_pair.public_key,
             group_id: self.group_id,
         }
     }
@@ -111,7 +111,7 @@ impl GroupSecretParams {
         &self,
         uid: crypto::uid_struct::UidStruct,
     ) -> api::groups::UuidCiphertext {
-        let ciphertext = self.uid_enc_key_pair.encrypt(uid);
+        let ciphertext = self.uid_enc_key_pair.encrypt(&uid);
         api::groups::UuidCiphertext {
             reserved: Default::default(),
             ciphertext,
@@ -122,7 +122,10 @@ impl GroupSecretParams {
         &self,
         ciphertext: api::groups::UuidCiphertext,
     ) -> Result<libsignal_protocol::ServiceId, ZkGroupVerificationFailure> {
-        self.uid_enc_key_pair.decrypt(ciphertext.ciphertext)
+        crypto::uid_encryption::UidEncryptionDomain::decrypt(
+            &self.uid_enc_key_pair,
+            &ciphertext.ciphertext,
+        )
     }
 
     pub fn encrypt_profile_key(
@@ -142,7 +145,7 @@ impl GroupSecretParams {
             profile_key_bytes,
             uuid::Uuid::from(user_id).into_bytes(),
         );
-        let ciphertext = self.profile_key_enc_key_pair.encrypt(profile_key);
+        let ciphertext = self.profile_key_enc_key_pair.encrypt(&profile_key);
         api::groups::ProfileKeyCiphertext {
             reserved: Default::default(),
             ciphertext,
@@ -154,10 +157,12 @@ impl GroupSecretParams {
         ciphertext: api::groups::ProfileKeyCiphertext,
         user_id: libsignal_protocol::Aci,
     ) -> Result<api::profiles::ProfileKey, ZkGroupVerificationFailure> {
-        let profile_key_struct = self.profile_key_enc_key_pair.decrypt(
-            ciphertext.ciphertext,
-            uuid::Uuid::from(user_id).into_bytes(),
-        )?;
+        let profile_key_struct =
+            crypto::profile_key_encryption::ProfileKeyEncryptionDomain::decrypt(
+                &self.profile_key_enc_key_pair,
+                &ciphertext.ciphertext,
+                uuid::Uuid::from(user_id).into_bytes(),
+            )?;
         Ok(api::profiles::ProfileKey {
             bytes: profile_key_struct.bytes,
         })
@@ -275,17 +280,17 @@ mod tests {
             0x00, 0x00, 0x00, 0x00,
         ];
 
-        let key_vec = vec![
+        let key = [
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00,
         ];
 
-        let nonce_vec = vec![
+        let nonce = [
             0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
 
-        let ciphertext_vec = vec![
+        let ciphertext = [
             0x4a, 0x6a, 0x9d, 0xb4, 0xc8, 0xc6, 0x54, 0x92, 0x01, 0xb9, 0xed, 0xb5, 0x30, 0x06,
             0xcb, 0xa8, 0x21, 0xec, 0x9c, 0xf8, 0x50, 0x94, 0x8a, 0x7c, 0x86, 0xc6, 0x8a, 0xc7,
             0x53, 0x9d, 0x02, 0x7f, 0xe8, 0x19, 0xe6, 0x3a, 0xbc, 0xd0, 0x20, 0xb0, 0x06, 0xa9,
@@ -293,12 +298,12 @@ mod tests {
         ];
 
         let calc_ciphertext =
-            group_secret_params.encrypt_blob_aesgcmsiv(&key_vec, &nonce_vec, &plaintext_vec);
+            group_secret_params.encrypt_blob_aesgcmsiv(&key, &nonce, &plaintext_vec);
 
-        assert!(calc_ciphertext[..ciphertext_vec.len()] == ciphertext_vec[..]);
+        assert!(calc_ciphertext[..ciphertext.len()] == ciphertext[..]);
 
         let calc_plaintext = group_secret_params
-            .decrypt_blob_aesgcmsiv(&key_vec, &nonce_vec, &calc_ciphertext)
+            .decrypt_blob_aesgcmsiv(&key, &nonce, &calc_ciphertext)
             .unwrap();
         assert!(calc_plaintext[..] == plaintext_vec[..]);
     }
@@ -315,17 +320,17 @@ mod tests {
             0x3a, 0x98, 0xe1, 0x08,
         ];
 
-        let key_vec = vec![
+        let key = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00,
         ];
 
-        let nonce_vec = vec![
+        let nonce = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
 
-        let ciphertext_vec = vec![
+        let ciphertext = [
             0xf3, 0xf8, 0x0f, 0x2c, 0xf0, 0xcb, 0x2d, 0xd9, 0xc5, 0x98, 0x4f, 0xcd, 0xa9, 0x08,
             0x45, 0x6c, 0xc5, 0x37, 0x70, 0x3b, 0x5b, 0xa7, 0x03, 0x24, 0xa6, 0x79, 0x3a, 0x7b,
             0xf2, 0x18, 0xd3, 0xea, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -333,12 +338,12 @@ mod tests {
         ];
 
         let calc_ciphertext =
-            group_secret_params.encrypt_blob_aesgcmsiv(&key_vec, &nonce_vec, &plaintext_vec);
+            group_secret_params.encrypt_blob_aesgcmsiv(&key, &nonce, &plaintext_vec);
 
-        assert!(calc_ciphertext[..ciphertext_vec.len()] == ciphertext_vec[..]);
+        assert!(calc_ciphertext[..ciphertext.len()] == ciphertext[..]);
 
         let calc_plaintext = group_secret_params
-            .decrypt_blob_aesgcmsiv(&key_vec, &nonce_vec, &calc_ciphertext)
+            .decrypt_blob_aesgcmsiv(&key, &nonce, &calc_ciphertext)
             .unwrap();
         assert!(calc_plaintext[..] == plaintext_vec[..]);
     }

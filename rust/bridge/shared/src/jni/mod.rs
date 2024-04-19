@@ -3,10 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-extern crate jni_crate as jni;
-
-use jni::objects::{JThrowable, JValue};
-use jni::sys::jobject;
+use jni::objects::{GlobalRef, JThrowable, JValue, JValueOwned};
+use jni::JavaVM;
 
 use attest::hsm_enclave::Error as HsmEnclaveError;
 use attest::sgx_session::Error as SgxError;
@@ -17,9 +15,12 @@ use signal_pin::Error as PinError;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::fmt::Display;
+use std::marker::PhantomData;
 
-pub(crate) use jni::objects::{AutoArray, JClass, JObject, JString, ReleaseMode};
-pub(crate) use jni::sys::{jboolean, jbyteArray, jint, jlong, jlongArray, jstring};
+pub(crate) use jni::objects::{
+    AutoElements, JByteArray, JClass, JLongArray, JObject, JString, ReleaseMode,
+};
+pub(crate) use jni::sys::{jboolean, jint, jlong};
 pub(crate) use jni::JNIEnv;
 
 #[macro_use]
@@ -32,6 +33,9 @@ pub use convert::*;
 
 mod error;
 pub use error::*;
+
+mod futures;
+pub use futures::*;
 
 mod io;
 pub use io::*;
@@ -46,28 +50,35 @@ pub type ObjectHandle = jlong;
 
 pub type JavaObject<'a> = JObject<'a>;
 pub type JavaUUID<'a> = JObject<'a>;
-pub type JavaReturnUUID = jobject;
 pub type JavaCiphertextMessage<'a> = JObject<'a>;
-pub type JavaReturnCiphertextMessage = jobject;
-pub type JavaReturnMap = jobject;
+pub type JavaMap<'a> = JObject<'a>;
 
-/// Translates errors into Java exceptions.
-///
-/// Exceptions thrown in callbacks will be rethrown; all other errors will be mapped to an
-/// appropriate Java exception class and thrown.
-fn throw_error(env: &JNIEnv, error: SignalJniError) {
-    fn try_throw<E: Display>(env: &JNIEnv, throwable: Result<JObject, E>, error: SignalJniError) {
-        match throwable {
-            Err(failure) => log::error!("failed to create exception for {}: {}", error, failure),
-            Ok(throwable) => {
-                let result = env.throw(JThrowable::from(throwable));
-                if let Err(failure) = result {
-                    log::error!("failed to throw exception for {}: {}", error, failure);
-                }
-            }
+#[derive(Default)]
+#[repr(transparent)] // This ensures that JavaFuture has the same representation as JObject.
+pub struct JavaFuture<'a, T> {
+    future_object: JObject<'a>,
+    result: PhantomData<fn(T)>,
+}
+
+impl<'a, T> From<JObject<'a>> for JavaFuture<'a, T> {
+    fn from(future_object: JObject<'a>) -> Self {
+        Self {
+            future_object,
+            result: PhantomData,
         }
     }
+}
 
+impl<'a, T> From<JavaFuture<'a, T>> for JObject<'a> {
+    fn from(value: JavaFuture<'a, T>) -> Self {
+        value.future_object
+    }
+}
+
+fn convert_to_exception<'a, F>(env: &mut JNIEnv<'a>, error: SignalJniError, consume: F)
+where
+    F: FnOnce(&mut JNIEnv<'a>, SignalJniResult<JThrowable<'a>>, &dyn Display),
+{
     // Handle special cases first.
     let error = match error {
         SignalJniError::Signal(SignalProtocolError::ApplicationCallbackError(
@@ -80,9 +91,12 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
             if <dyn Error>::is::<ThrownException>(&*exception) {
                 let exception =
                     <dyn Error>::downcast::<ThrownException>(exception).expect("just checked");
-                if let Err(e) = env.throw(exception.as_obj()) {
-                    log::error!("failed to rethrow exception from {}: {}", callback, e);
-                }
+                let throwable = env.new_local_ref(exception.as_obj()).map(JThrowable::from);
+                consume(
+                    env,
+                    throwable.map_err(Into::into),
+                    &format!("error in method call '{callback}'"),
+                );
                 return;
             }
 
@@ -93,13 +107,19 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
         }
 
         SignalJniError::Signal(SignalProtocolError::UntrustedIdentity(ref addr)) => {
-            let result = env.throw_new(
-                jni_class_name!(org.signal.libsignal.protocol.UntrustedIdentityException),
-                addr.name(),
-            );
-            if let Err(e) = result {
-                log::error!("failed to throw exception for {}: {}", error, e);
-            }
+            let throwable = env
+                .new_string(addr.name())
+                .and_then(|addr_name| {
+                    Ok(new_object(
+                        env,
+                        jni_class_name!(org.signal.libsignal.protocol.UntrustedIdentityException),
+                        jni_args!((addr_name => java.lang.String) -> void),
+                    )?
+                    .into())
+                })
+                .map_err(Into::into);
+
+            consume(env, throwable, &error);
             return;
         }
 
@@ -107,18 +127,18 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
             let throwable = protocol_address_to_jobject(env, addr)
                 .and_then(|addr_object| Ok((addr_object, env.new_string(error.to_string())?)))
                 .and_then(|(addr_object, message)| {
-                    let args = jni_args!((
-                        addr_object => org.signal.libsignal.protocol.SignalProtocolAddress,
-                        message => java.lang.String,
-                    ) -> void);
-                    Ok(env.new_object(
+                    Ok(new_object(
+                        env,
                         jni_class_name!(org.signal.libsignal.protocol.NoSessionException),
-                        args.sig,
-                        &args.args,
-                    )?)
+                        jni_args!((
+                            addr_object => org.signal.libsignal.protocol.SignalProtocolAddress,
+                            message => java.lang.String,
+                        ) -> void),
+                    )?
+                    .into())
                 });
 
-            try_throw(env, throwable, error);
+            consume(env, throwable, &error);
             return;
         }
 
@@ -126,20 +146,20 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
             let throwable = protocol_address_to_jobject(env, addr)
                 .and_then(|addr_object| Ok((addr_object, env.new_string(error.to_string())?)))
                 .and_then(|(addr_object, message)| {
-                    let args = jni_args!((
-                        addr_object => org.signal.libsignal.protocol.SignalProtocolAddress,
-                        message => java.lang.String,
-                    ) -> void);
-                    Ok(env.new_object(
+                    Ok(new_object(
+                        env,
                         jni_class_name!(
                             org.signal.libsignal.protocol.InvalidRegistrationIdException
                         ),
-                        args.sig,
-                        &args.args,
-                    )?)
+                        jni_args!((
+                            addr_object => org.signal.libsignal.protocol.SignalProtocolAddress,
+                            message => java.lang.String,
+                        ) -> void),
+                    )?
+                    .into())
                 });
 
-            try_throw(env, throwable, error);
+            consume(env, throwable, &error);
             return;
         }
 
@@ -152,11 +172,8 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
                     Ok((distribution_id_obj, env.new_string(error.to_string())?))
                 })
                 .and_then(|(distribution_id_obj, message)| {
-                    let args = jni_args!((
-                        distribution_id_obj => java.util.UUID,
-                        message => java.lang.String,
-                    ) -> void);
-                    Ok(env.new_object(
+                    Ok(new_object(
+                        env,
                         jni_class_name!(
                             org.signal
                                 .libsignal
@@ -164,18 +181,21 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
                                 .groups
                                 .InvalidSenderKeySessionException
                         ),
-                        args.sig,
-                        &args.args,
-                    )?)
+                        jni_args!((
+                            distribution_id_obj => java.util.UUID,
+                            message => java.lang.String,
+                        ) -> void),
+                    )?
+                    .into())
                 });
 
-            try_throw(env, throwable, error);
+            consume(env, throwable, &error);
             return;
         }
 
         SignalJniError::Signal(SignalProtocolError::FingerprintVersionMismatch(theirs, ours)) => {
-            let args = jni_args!((theirs as jint => int, ours as jint => int) -> void);
-            let throwable = env.new_object(
+            let throwable = new_object(
+                env,
                 jni_class_name!(
                     org.signal
                         .libsignal
@@ -183,22 +203,23 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
                         .fingerprint
                         .FingerprintVersionMismatchException
                 ),
-                args.sig,
-                &args.args,
-            );
+                jni_args!((theirs as jint => int, ours as jint => int) -> void),
+            )
+            .map(JThrowable::from);
 
-            try_throw(env, throwable, error);
+            consume(env, throwable.map_err(Into::into), &error);
             return;
         }
 
         SignalJniError::Signal(SignalProtocolError::SealedSenderSelfSend) => {
-            let throwable = env.new_object(
+            let throwable = new_object(
+                env,
                 jni_class_name!(org.signal.libsignal.metadata.SelfSendException),
-                jni_signature!(() -> void),
-                &[],
-            );
+                jni_args!(() -> void),
+            )
+            .map(JThrowable::from);
 
-            try_throw(env, throwable, error);
+            consume(env, throwable.map_err(Into::into), &error);
             return;
         }
 
@@ -207,15 +228,15 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
         | SignalJniError::UnexpectedJniResultType(_, _) => {
             // java.lang.AssertionError has a slightly different signature.
             let throwable = env.new_string(error.to_string()).and_then(|message| {
-                let args = jni_args!((message => java.lang.Object) -> void);
-                env.new_object(
+                Ok(new_object(
+                    env,
                     jni_class_name!(java.lang.AssertionError),
-                    args.sig,
-                    &args.args,
-                )
+                    jni_args!((message => java.lang.Object) -> void),
+                )?
+                .into())
             });
 
-            try_throw(env, throwable, error);
+            consume(env, throwable.map_err(Into::into), &error);
             return;
         }
 
@@ -425,66 +446,60 @@ fn throw_error(env: &JNIEnv, error: SignalJniError) {
         }
 
         #[cfg(feature = "signal-media")]
-        SignalJniError::MediaSanitizeParse(_) => {
+        SignalJniError::Mp4SanitizeParse(_) | SignalJniError::WebpSanitizeParse(_) => {
             jni_class_name!(org.signal.libsignal.media.ParseException)
         }
     };
 
-    if let Err(e) = env.throw_new(exception_type, error.to_string()) {
-        log::error!("failed to throw exception for {}: {}", error, e);
-    }
+    let throwable = env
+        .new_string(error.to_string())
+        .and_then(|message| {
+            Ok(new_object(
+                env,
+                exception_type,
+                jni_args!((message => java.lang.String) -> void),
+            )?
+            .into())
+        })
+        .map_err(Into::into);
+    consume(env, throwable, &error)
 }
 
-/// Provides a dummy value to return when an exception is thrown.
-pub trait JniDummyValue {
-    fn dummy_value() -> Self;
-}
-
-impl JniDummyValue for ObjectHandle {
-    fn dummy_value() -> Self {
-        0
-    }
-}
-
-impl JniDummyValue for jint {
-    fn dummy_value() -> Self {
-        0
-    }
-}
-
-impl JniDummyValue for jobject {
-    fn dummy_value() -> Self {
-        std::ptr::null_mut()
-    }
-}
-
-impl JniDummyValue for jboolean {
-    fn dummy_value() -> Self {
-        0
-    }
-}
-
-impl JniDummyValue for () {
-    fn dummy_value() -> Self {}
+/// Translates errors into Java exceptions.
+///
+/// Exceptions thrown in callbacks will be rethrown; all other errors will be mapped to an
+/// appropriate Java exception class and thrown.
+fn throw_error(env: &mut JNIEnv, error: SignalJniError) {
+    convert_to_exception(env, error, |env, throwable, error| match throwable {
+        Err(failure) => log::error!("failed to create exception for {}: {}", error, failure),
+        Ok(throwable) => {
+            let result = env.throw(throwable);
+            if let Err(failure) = result {
+                log::error!("failed to throw exception for {}: {}", error, failure);
+            }
+        }
+    });
 }
 
 #[inline(always)]
-pub fn run_ffi_safe<F: FnOnce() -> Result<R, SignalJniError> + std::panic::UnwindSafe, R>(
-    env: &JNIEnv,
-    f: F,
-) -> R
+pub fn run_ffi_safe<'local, F, R>(env: &mut JNIEnv<'local>, f: F) -> R
 where
-    R: JniDummyValue,
+    F: for<'a> FnOnce(&'a mut JNIEnv<'local>) -> Result<R, SignalJniError> + std::panic::UnwindSafe,
+    R: Default,
 {
-    match std::panic::catch_unwind(f) {
+    // This AssertUnwindSafe is not technically safe.
+    // If we get a panic downstream, it is entirely possible the Java environment won't be usable anymore.
+    // But if that's the case, we've got bigger problems!
+    // So if we want to catch panics, we have to allow this.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(env))) {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
             throw_error(env, e);
-            R::dummy_value()
+            R::default()
         }
         Err(r) => {
             throw_error(env, SignalJniError::UnexpectedPanic(r));
-            R::dummy_value()
+            R::default()
         }
     }
 }
@@ -504,50 +519,23 @@ pub unsafe fn native_handle_cast<T>(
     Ok(&mut *(handle as *mut T))
 }
 
-/// Calls a passed in function with a local frame of capacity that's passed in. Basically just
-/// the jni with_local_frame except with the result type changed to use SignalJniError instead.
-pub fn with_local_frame<'a, F>(env: &'a JNIEnv, capacity: i32, f: F) -> SignalJniResult<JObject<'a>>
-where
-    F: FnOnce() -> SignalJniResult<JObject<'a>>,
-{
-    env.push_local_frame(capacity)?;
-    let res = f();
-    match res {
-        Ok(obj) => Ok(env.pop_local_frame(obj)?),
-        Err(e) => {
-            env.pop_local_frame(JObject::null())?;
-            Err(e)
-        }
-    }
-}
-
-/// Calls a passed in function with a local frame of capacity that's passed in. Basically just
-/// the jni with_local_frame except with the result type changed to use SignalJniError instead.
-pub fn with_local_frame_no_jobject_result<F, T>(
-    env: &JNIEnv,
-    capacity: i32,
-    f: F,
-) -> SignalJniResult<T>
-where
-    F: FnOnce() -> SignalJniResult<T>,
-{
-    env.push_local_frame(capacity)?;
-    let res = f();
-    env.pop_local_frame(JObject::null())?;
-    res
-}
-
 /// Calls a method and translates any thrown exceptions to
 /// [`SignalProtocolError::ApplicationCallbackError`].
 ///
 /// Wraps [`JNIEnv::call_method`]; all arguments are the same.
 /// The result must have the correct type, or [`SignalJniError::UnexpectedJniResultType`] will be
 /// returned instead.
-pub fn call_method_checked<'a, O: Into<JObject<'a>>, R: TryFrom<JValue<'a>>, const LEN: usize>(
-    env: &JNIEnv<'a>,
+pub fn call_method_checked<
+    'input,
+    'output,
+    O: AsRef<JObject<'input>>,
+    R: TryFrom<JValueOwned<'output>>,
+    const LEN: usize,
+>(
+    env: &mut JNIEnv<'output>,
     obj: O,
     fn_name: &'static str,
-    args: JniArgs<'a, R, LEN>,
+    args: JniArgs<R, LEN>,
 ) -> Result<R, SignalJniError> {
     // Note that we are *not* unwrapping the result yet!
     // We need to check for exceptions *first*.
@@ -556,9 +544,10 @@ pub fn call_method_checked<'a, O: Into<JObject<'a>>, R: TryFrom<JValue<'a>>, con
     let throwable = env.exception_occurred()?;
     if **throwable == *JObject::null() {
         let result = result?;
+        let type_name = result.type_name();
         result
             .try_into()
-            .map_err(|_| SignalJniError::UnexpectedJniResultType(fn_name, result.type_name()))
+            .map_err(|_| SignalJniError::UnexpectedJniResultType(fn_name, type_name))
     } else {
         env.exception_clear()?;
 
@@ -570,39 +559,56 @@ pub fn call_method_checked<'a, O: Into<JObject<'a>>, R: TryFrom<JValue<'a>>, con
     }
 }
 
+/// Constructs a new object using [`JniArgs`].
+///
+/// Wraps [`JNIEnv::new_object`]; all arguments are the same.
+pub fn new_object<
+    'output,
+    C: jni::descriptors::Desc<'output, JClass<'output>>,
+    R: TryFrom<JValueOwned<'output>>,
+    const LEN: usize,
+>(
+    env: &mut JNIEnv<'output>,
+    cls: C,
+    args: JniArgs<R, LEN>,
+) -> jni::errors::Result<JObject<'output>> {
+    env.new_object(cls, args.sig, &args.args)
+}
+
 /// Constructs a Java object from the given boxed Rust value.
 ///
 /// Assumes there's a corresponding constructor that takes a single `long` to represent the address.
 pub fn jobject_from_native_handle<'a>(
-    env: &'a JNIEnv,
+    env: &mut JNIEnv<'a>,
     class_name: &str,
     boxed_handle: ObjectHandle,
 ) -> Result<JObject<'a>, SignalJniError> {
-    let class_type = env.find_class(class_name)?;
-    let args = jni_args!((
-        boxed_handle => long,
-    ) -> void);
-    Ok(env.new_object(class_type, args.sig, &args.args)?)
+    Ok(new_object(
+        env,
+        class_name,
+        jni_args!((boxed_handle => long) -> void),
+    )?)
 }
 
 /// Constructs a Java SignalProtocolAddress from a ProtocolAddress value.
 ///
 /// A convenience wrapper around `jobject_from_native_handle` for SignalProtocolAddress.
 fn protocol_address_to_jobject<'a>(
-    env: &'a JNIEnv,
+    env: &mut JNIEnv<'a>,
     address: &ProtocolAddress,
 ) -> Result<JObject<'a>, SignalJniError> {
+    let handle = address.clone().convert_into(env)?;
     jobject_from_native_handle(
         env,
         jni_class_name!(org.signal.libsignal.protocol.SignalProtocolAddress),
-        address.clone().convert_into(env)?,
+        handle,
     )
 }
 
 /// Verifies that a Java object is a non-`null` instance of the given class.
 pub fn check_jobject_type(
-    env: &JNIEnv,
-    obj: JObject,
+    env: &mut JNIEnv,
+    obj: &JObject,
     class_name: &'static str,
 ) -> Result<(), SignalJniError> {
     if obj.is_null() {
@@ -623,13 +629,18 @@ pub fn check_jobject_type(
 /// The method is assumed to return a type with a `long nativeHandle()` method, which in turn must
 /// produce a boxed Rust value.
 pub fn get_object_with_native_handle<T: 'static + Clone, const LEN: usize>(
-    env: &JNIEnv,
-    store_obj: JObject,
-    callback_args: JniArgs<JObject, LEN>,
+    env: &mut JNIEnv,
+    store_obj: &JObject,
+    callback_args: JniArgs<JObject<'_>, LEN>,
     callback_fn: &'static str,
 ) -> Result<Option<T>, SignalJniError> {
-    with_local_frame_no_jobject_result(env, 64, || -> SignalJniResult<Option<T>> {
-        let obj = call_method_checked(env, store_obj, callback_fn, callback_args)?;
+    env.with_local_frame(64, |env| -> SignalJniResult<Option<T>> {
+        let obj = call_method_checked(
+            env,
+            store_obj,
+            callback_fn,
+            callback_args.for_nested_frame(),
+        )?;
         if obj.is_null() {
             return Ok(None);
         }
@@ -650,21 +661,27 @@ pub fn get_object_with_native_handle<T: 'static + Clone, const LEN: usize>(
 ///
 /// The method is assumed to return a type with a `byte[] serialize()` method.
 pub fn get_object_with_serialization<const LEN: usize>(
-    env: &JNIEnv,
-    store_obj: JObject,
-    callback_args: JniArgs<JObject, LEN>,
+    env: &mut JNIEnv,
+    store_obj: &JObject,
+    callback_args: JniArgs<JObject<'_>, LEN>,
     callback_fn: &'static str,
 ) -> Result<Option<Vec<u8>>, SignalJniError> {
-    with_local_frame_no_jobject_result(env, 64, || -> SignalJniResult<Option<Vec<u8>>> {
-        let obj = call_method_checked(env, store_obj, callback_fn, callback_args)?;
+    env.with_local_frame(64, |env| -> SignalJniResult<Option<Vec<u8>>> {
+        let obj = call_method_checked(
+            env,
+            store_obj,
+            callback_fn,
+            callback_args.for_nested_frame(),
+        )?;
 
         if obj.is_null() {
             return Ok(None);
         }
 
-        let bytes = call_method_checked(env, obj, "serialize", jni_args!(() -> [byte]))?;
+        let bytes: JByteArray =
+            call_method_checked(env, obj, "serialize", jni_args!(() -> [byte]))?.into();
 
-        Ok(Some(env.convert_byte_array(*bytes)?))
+        Ok(Some(env.convert_byte_array(bytes)?))
     })
 }
 
@@ -720,4 +737,84 @@ macro_rules! jni_bridge_destroy {
             }
         }
     };
+}
+
+/// A wrapper around a cloned [`JNIEnv`] that forces scoped use.
+///
+/// This sidesteps the safety issues with [`JNIEnv::unsafe_clone`] as long as an environment from an
+/// outer frame is not used within an inner frame. (Really, this same condition makes `unsafe_clone`
+/// safe as well, but using `EnvHandle` is a good reminder since it *only* allows scoped access.)
+struct EnvHandle<'a> {
+    env: JNIEnv<'a>,
+}
+
+impl<'a> EnvHandle<'a> {
+    fn new(env: &JNIEnv<'a>) -> Self {
+        Self {
+            env: unsafe { env.unsafe_clone() },
+        }
+    }
+
+    /// See [`JNIEnv::with_local_frame`].
+    fn with_local_frame<F, T, E>(&mut self, capacity: i32, f: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut JNIEnv<'_>) -> Result<T, E>,
+        E: From<jni::errors::Error>,
+    {
+        self.env.with_local_frame(capacity, f)
+    }
+}
+
+/// A helper to convert a primitive value, like `int`, to its boxed types, like `Integer`.
+///
+/// A value that's already an object will be unchanged. A `void` "value" will be converted to
+/// `null`.
+fn box_primitive_if_needed<'a>(
+    env: &mut JNIEnv<'a>,
+    value: JValueOwned<'a>,
+) -> jni::errors::Result<JObject<'a>> {
+    match value {
+        JValueOwned::Object(object) => Ok(object),
+        JValueOwned::Byte(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Byte),
+            jni_args!((v => byte) -> void),
+        ),
+        JValueOwned::Char(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Character),
+            jni_args!((v => char) -> void),
+        ),
+        JValueOwned::Short(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Short),
+            jni_args!((v => short) -> void),
+        ),
+        JValueOwned::Int(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Integer),
+            jni_args!((v => int) -> void),
+        ),
+        JValueOwned::Long(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Long),
+            jni_args!((v => long) -> void),
+        ),
+        JValueOwned::Bool(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Boolean),
+            jni_args!((v != 0 => boolean) -> void),
+        ),
+        JValueOwned::Float(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Float),
+            jni_args!((v => float) -> void),
+        ),
+        JValueOwned::Double(v) => new_object(
+            env,
+            jni_class_name!(java.lang.Double),
+            jni_args!((v => double) -> void),
+        ),
+        JValueOwned::Void => Ok(JObject::null()),
+    }
 }

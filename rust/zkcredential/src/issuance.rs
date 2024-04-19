@@ -42,7 +42,7 @@ pub struct IssuanceProof {
 /// calling [`issue`](Self::issue) and the client by calling [`verify`](Self::verify).
 pub struct IssuanceProofBuilder<'a> {
     public_attrs: ShoHmacSha256,
-    // Directly accessed by BlindIssuanceProofBuilder.
+    /// Directly accessed by [`blind::BlindedIssuanceProofBuilder`].
     attr_points: Vec<RistrettoPoint>,
     authenticated_message: &'a [u8],
 }
@@ -136,7 +136,7 @@ impl<'a> IssuanceProofBuilder<'a> {
 
     /// Generates a [`poksho::PointArgs`] to be used in the final proof.
     ///
-    /// `total_attr_count` is passed in for [blind issuance](blind::BlindIssuanceProofBuilder), in
+    /// `total_attr_count` is passed in for [blind issuance](blind::BlindedIssuanceProofBuilder), in
     /// which case the caller may provide additional attributes.
     fn prepare_scalar_args(
         &self,
@@ -156,7 +156,7 @@ impl<'a> IssuanceProofBuilder<'a> {
 
         let y_names: [_; NUM_SUPPORTED_ATTRS] = ["y0", "y1", "y2", "y3", "y4", "y5", "y6"];
         for (name, value) in y_names
-            .iter()
+            .into_iter()
             .take(total_attr_count)
             .zip(key_pair.private_key().y.iter())
         {
@@ -168,7 +168,7 @@ impl<'a> IssuanceProofBuilder<'a> {
     /// Generates a [`poksho::PointArgs`] to be used in the final proof.
     ///
     /// The `credential` argument may be `None` when used for [blind
-    /// issuance](blind::BlindIssuanceProofBuilder), in which case the caller is responsible for
+    /// issuance](blind::BlindedIssuanceProofBuilder), in which case the caller is responsible for
     /// adding its own points representing the credential.
     fn prepare_point_args(
         &self,
@@ -193,7 +193,7 @@ impl<'a> IssuanceProofBuilder<'a> {
         let G_y_names: [_; NUM_SUPPORTED_ATTRS] =
             ["G_y0", "G_y1", "G_y2", "G_y3", "G_y4", "G_y5", "G_y6"];
         for (name, value) in G_y_names
-            .iter()
+            .into_iter()
             .take(total_attr_count)
             .zip(system.G_y.iter())
         {
@@ -207,7 +207,7 @@ impl<'a> IssuanceProofBuilder<'a> {
         }
 
         let M_names: [_; NUM_SUPPORTED_ATTRS] = ["M0", "M1", "M2", "M3", "M4", "M5", "M6"];
-        for (name, value) in M_names.iter().zip(&self.attr_points) {
+        for (name, value) in M_names.into_iter().zip(&self.attr_points) {
             point_args.add(name, *value);
         }
         point_args

@@ -21,11 +21,13 @@ bincode = "1.2.1"
 serde = { version = "1.0.106", features = ["derive"] }
 sha2 = "0.10.0"
 hex = "0.4.0"
+hex-literal = "0.4.1"
 aes-gcm-siv = "0.11.1"
 displaydoc = "0.2"
 lazy_static = "1.4.0"
 subtle = "2.3"
 uuid = "1.1.2"
+hkdf = "0.12"
 
 # For generation
 base64 = { version = "0.21", optional = true }

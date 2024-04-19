@@ -12,7 +12,7 @@ use std::hash::Hasher;
 use std::ops::{Deref, DerefMut, RangeInclusive};
 use std::slice;
 
-use crate::io::InputStream;
+use crate::io::{InputStream, SyncInputStream};
 use crate::support::{Array, FixedLengthBincodeSerializable, Serialized};
 
 use super::*;
@@ -409,7 +409,7 @@ impl<'a> AssumedImmutableBuffer<'a> {
     /// potentially optimizing out that checksum, though.)
     ///
     /// [napi]: https://nodejs.org/api/n-api.html#n_api_napi_get_buffer_info
-    fn new<'b>(cx: &mut impl Context<'b>, handle: Handle<'a, JsBuffer>) -> Self {
+    fn new<'b>(cx: &impl Context<'b>, handle: Handle<'a, JsBuffer>) -> Self {
         let buf = handle.as_slice(cx);
         let extended_lifetime_buffer = if buf.is_empty() {
             &[]
@@ -421,6 +421,13 @@ impl<'a> AssumedImmutableBuffer<'a> {
             buffer: extended_lifetime_buffer,
             hash,
         }
+    }
+}
+
+impl Deref for AssumedImmutableBuffer<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.buffer
     }
 }
 
@@ -532,7 +539,7 @@ impl<'a> AsyncArgTypeInfo<'a> for &'a [u8] {
     }
 }
 
-macro_rules! store {
+macro_rules! bridge_trait {
     ($name:ident) => {
         paste! {
             impl<'a> AsyncArgTypeInfo<'a> for &'a mut dyn $name {
@@ -552,13 +559,33 @@ macro_rules! store {
     };
 }
 
-store!(IdentityKeyStore);
-store!(PreKeyStore);
-store!(SenderKeyStore);
-store!(SessionStore);
-store!(SignedPreKeyStore);
-store!(KyberPreKeyStore);
-store!(InputStream);
+bridge_trait!(IdentityKeyStore);
+bridge_trait!(PreKeyStore);
+bridge_trait!(SenderKeyStore);
+bridge_trait!(SessionStore);
+bridge_trait!(SignedPreKeyStore);
+bridge_trait!(KyberPreKeyStore);
+bridge_trait!(InputStream);
+
+impl<'storage, 'context: 'storage> ArgTypeInfo<'storage, 'context>
+    for &'storage mut dyn SyncInputStream
+{
+    type ArgType = JsBuffer;
+    type StoredType = NodeSyncInputStream<'context>;
+
+    fn borrow(
+        cx: &mut FunctionContext<'context>,
+        foreign: Handle<'context, Self::ArgType>,
+    ) -> NeonResult<Self::StoredType> {
+        Ok(NodeSyncInputStream::new(AssumedImmutableBuffer::new(
+            cx, foreign,
+        )))
+    }
+
+    fn load_from(stored: &'storage mut Self::StoredType) -> Self {
+        stored
+    }
+}
 
 impl<'a> ResultTypeInfo<'a> for bool {
     type ResultType = JsBoolean;
@@ -822,7 +849,8 @@ pub(crate) const NATIVE_HANDLE_PROPERTY: &str = "_nativeHandle";
 ///
 /// Since this trait is used as a marker and implemented through a macro,
 /// operations that might differ across types have been factored into the [`BridgeHandleStrategy`]
-/// trait. The [`bridge_handle`] macro will automatically choose the correct strategy.
+/// trait. The [`bridge_handle`](crate::support::bridge_handle) macro will automatically choose the
+/// correct strategy.
 pub trait BridgeHandle: Send + Sync + Sized + 'static {
     /// Factors out operations that differ between mutable and immutable bridge handles.
     type Strategy: BridgeHandleStrategy<Self>;

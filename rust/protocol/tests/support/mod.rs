@@ -55,7 +55,7 @@ pub async fn decrypt(
         &mut store.session_store,
         &mut store.identity_store,
         &mut store.pre_key_store,
-        &mut store.signed_pre_key_store,
+        &store.signed_pre_key_store,
         &mut store.kyber_pre_key_store,
         &mut csprng,
     )
@@ -194,6 +194,16 @@ pub fn initialize_sessions_v4() -> Result<(SessionRecord, SessionRecord), Signal
     let bob_session = initialize_bob_session_record(&bob_params)?;
 
     Ok((alice_session, bob_session))
+}
+
+pub fn extract_single_ssv2_received_message(input: &[u8]) -> (ServiceId, Vec<u8>) {
+    let message = SealedSenderV2SentMessage::parse(input).expect("valid");
+    assert_eq!(1, message.recipients.len());
+    let result = message
+        .received_message_parts_for_recipient(&message.recipients[0])
+        .as_ref()
+        .concat();
+    (message.recipients[0].service_id, result)
 }
 
 pub enum IdChoice {

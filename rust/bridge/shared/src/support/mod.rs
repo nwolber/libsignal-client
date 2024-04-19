@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+use std::future::Future;
+
 pub(crate) use paste::paste;
 
 mod serialized;
@@ -75,6 +77,8 @@ pub fn describe_panic(any: &Box<dyn std::any::Any + Send>) -> String {
 ///   arguments are of the form `Wrapper<Foo>`.
 ///
 /// [`JsBox`]: https://docs.rs/neon/0.7.1-napi/neon/types/struct.JsBox.html
+/// [`node::AsyncArgTypeInfo`]: crate::node::AsyncArgTypeInfo
+#[macro_export]
 macro_rules! bridge_handle {
     ($typ:ty $(, clone = $_clone:tt)? $(, mut = $_mut:tt)? $(, ffi = $ffi_name:ident)? $(, jni = $jni_name:ident)? $(, node = $node_name:ident)?) => {
         #[cfg(feature = "ffi")]
@@ -85,6 +89,10 @@ macro_rules! bridge_handle {
         node_bridge_handle!($typ $(as $node_name)? $(, mut = $_mut)?);
     };
 }
+
+// Allow referring to the macro by path in doc comments.
+#[cfg(doc)]
+pub use bridge_handle;
 
 /// Convenience syntax to expose a deserialization method to the bridges.
 ///
@@ -176,4 +184,12 @@ macro_rules! bridge_get {
             bridge_get!($typ::$method as [<Get $method:camel>] -> $result $(, $param = $val)*);
         }
     };
+}
+
+/// Abstracts over executing a future with type `F`.
+///
+/// Putting the future type in the trait signature allows runtimes to impose additional
+/// requirements, such as `Send`, on the Futures they can run.
+pub trait AsyncRuntime<F: Future<Output = ()>> {
+    fn run_future(&self, future: F);
 }

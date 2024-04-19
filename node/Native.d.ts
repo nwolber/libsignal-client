@@ -51,6 +51,9 @@ export abstract class InputStream {
   _skip(amount: number): Promise<void>;
 }
 
+export abstract class SyncInputStream extends Buffer {
+}
+
 interface Wrapper<T> {
   readonly _nativeHandle: T
 }
@@ -72,6 +75,18 @@ export function AuthCredentialResponse_CheckValidContents(buffer: Buffer): void;
 export function AuthCredentialWithPniResponse_CheckValidContents(buffer: Buffer): void;
 export function AuthCredentialWithPni_CheckValidContents(buffer: Buffer): void;
 export function AuthCredential_CheckValidContents(buffer: Buffer): void;
+export function BackupAuthCredentialPresentation_CheckValidContents(presentationBytes: Buffer): void;
+export function BackupAuthCredentialPresentation_Verify(presentationBytes: Buffer, now: Timestamp, serverParamsBytes: Buffer): void;
+export function BackupAuthCredentialRequestContext_CheckValidContents(contextBytes: Buffer): void;
+export function BackupAuthCredentialRequestContext_GetRequest(contextBytes: Buffer): Buffer;
+export function BackupAuthCredentialRequestContext_New(backupKey: Buffer, uuid: Uuid): Buffer;
+export function BackupAuthCredentialRequestContext_ReceiveResponse(contextBytes: Buffer, responseBytes: Buffer, paramsBytes: Buffer, expectedReceiptLevel: Buffer): Buffer;
+export function BackupAuthCredentialRequest_CheckValidContents(requestBytes: Buffer): void;
+export function BackupAuthCredentialRequest_IssueDeterministic(requestBytes: Buffer, redemptionTime: Timestamp, receiptLevel: Buffer, paramsBytes: Buffer, randomness: Buffer): Buffer;
+export function BackupAuthCredentialResponse_CheckValidContents(responseBytes: Buffer): void;
+export function BackupAuthCredential_CheckValidContents(paramsBytes: Buffer): void;
+export function BackupAuthCredential_GetBackupId(credentialBytes: Buffer): Buffer;
+export function BackupAuthCredential_PresentDeterministic(credentialBytes: Buffer, serverParamsBytes: Buffer, randomness: Buffer): Buffer;
 export function CallLinkAuthCredentialPresentation_CheckValidContents(presentationBytes: Buffer): void;
 export function CallLinkAuthCredentialPresentation_GetUserId(presentationBytes: Buffer): Serialized<UuidCiphertext>;
 export function CallLinkAuthCredentialPresentation_Verify(presentationBytes: Buffer, now: Timestamp, serverParamsBytes: Buffer, callLinkParamsBytes: Buffer): void;
@@ -344,6 +359,27 @@ export function SignedPreKeyRecord_GetSignature(obj: Wrapper<SignedPreKeyRecord>
 export function SignedPreKeyRecord_GetTimestamp(obj: Wrapper<SignedPreKeyRecord>): Timestamp;
 export function SignedPreKeyRecord_New(id: number, timestamp: Timestamp, pubKey: Wrapper<PublicKey>, privKey: Wrapper<PrivateKey>, signature: Buffer): SignedPreKeyRecord;
 export function SignedPreKeyRecord_Serialize(obj: Wrapper<SignedPreKeyRecord>): Buffer;
+export function TESTING_ErrorOnBorrowAsync(_input: null): Promise<void>;
+export function TESTING_ErrorOnBorrowIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _input: null): Promise<void>;
+export function TESTING_ErrorOnBorrowSync(_input: null): void;
+export function TESTING_ErrorOnReturnAsync(_needsCleanup: null): Promise<null>;
+export function TESTING_ErrorOnReturnIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _needsCleanup: null): Promise<null>;
+export function TESTING_ErrorOnReturnSync(_needsCleanup: null): null;
+export function TESTING_FutureFailure(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _input: number): Promise<number>;
+export function TESTING_FutureSuccess(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, input: number): Promise<number>;
+export function TESTING_NonSuspendingBackgroundThreadRuntime_New(): NonSuspendingBackgroundThreadRuntime;
+export function TESTING_PanicInBodyAsync(_input: null): Promise<void>;
+export function TESTING_PanicInBodyIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _input: null): Promise<void>;
+export function TESTING_PanicInBodySync(_input: null): void;
+export function TESTING_PanicOnBorrowAsync(_input: null): Promise<void>;
+export function TESTING_PanicOnBorrowIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _input: null): Promise<void>;
+export function TESTING_PanicOnBorrowSync(_input: null): void;
+export function TESTING_PanicOnLoadAsync(_needsCleanup: null, _input: null): Promise<void>;
+export function TESTING_PanicOnLoadIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _needsCleanup: null, _input: null): Promise<void>;
+export function TESTING_PanicOnLoadSync(_needsCleanup: null, _input: null): void;
+export function TESTING_PanicOnReturnAsync(_needsCleanup: null): Promise<null>;
+export function TESTING_PanicOnReturnIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _needsCleanup: null): Promise<null>;
+export function TESTING_PanicOnReturnSync(_needsCleanup: null): null;
 export function UnidentifiedSenderMessageContent_Deserialize(data: Buffer): UnidentifiedSenderMessageContent;
 export function UnidentifiedSenderMessageContent_GetContentHint(m: Wrapper<UnidentifiedSenderMessageContent>): number;
 export function UnidentifiedSenderMessageContent_GetContents(obj: Wrapper<UnidentifiedSenderMessageContent>): Buffer;
@@ -362,6 +398,7 @@ export function UuidCiphertext_CheckValidContents(buffer: Buffer): void;
 export function ValidatingMac_Finalize(mac: Wrapper<ValidatingMac>): number;
 export function ValidatingMac_Initialize(key: Buffer, chunkSize: number, digests: Buffer): ValidatingMac;
 export function ValidatingMac_Update(mac: Wrapper<ValidatingMac>, bytes: Buffer, offset: number, length: number): number;
+export function WebpSanitizer_Sanitize(input: SyncInputStream, len: Buffer): void;
 export function initLogger(maxLevel: LogLevel, callback: (level: LogLevel, target: string, file: string | null, line: number | null, message: string) => void): void
 interface Aes256GcmSiv { readonly __type: unique symbol; }
 interface AuthCredential { readonly __type: unique symbol; }
@@ -382,6 +419,7 @@ interface KyberKeyPair { readonly __type: unique symbol; }
 interface KyberPreKeyRecord { readonly __type: unique symbol; }
 interface KyberPublicKey { readonly __type: unique symbol; }
 interface KyberSecretKey { readonly __type: unique symbol; }
+interface NonSuspendingBackgroundThreadRuntime { readonly __type: unique symbol; }
 interface PlaintextContent { readonly __type: unique symbol; }
 interface PreKeyBundle { readonly __type: unique symbol; }
 interface PreKeyRecord { readonly __type: unique symbol; }

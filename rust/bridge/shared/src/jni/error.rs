@@ -35,7 +35,9 @@ pub enum SignalJniError {
     UsernameLinkError(UsernameLinkError),
     Io(IoError),
     #[cfg(feature = "signal-media")]
-    MediaSanitizeParse(signal_media::sanitize::ParseErrorReport),
+    Mp4SanitizeParse(signal_media::sanitize::mp4::ParseErrorReport),
+    #[cfg(feature = "signal-media")]
+    WebpSanitizeParse(signal_media::sanitize::webp::ParseErrorReport),
     Jni(jni::errors::Error),
     BadJniParameter(&'static str),
     UnexpectedJniResultType(&'static str, &'static str),
@@ -63,7 +65,9 @@ impl fmt::Display for SignalJniError {
             SignalJniError::UsernameLinkError(e) => write!(f, "{}", e),
             SignalJniError::Io(e) => write!(f, "{}", e),
             #[cfg(feature = "signal-media")]
-            SignalJniError::MediaSanitizeParse(e) => write!(f, "{}", e),
+            SignalJniError::Mp4SanitizeParse(e) => write!(f, "{}", e),
+            #[cfg(feature = "signal-media")]
+            SignalJniError::WebpSanitizeParse(e) => write!(f, "{}", e),
             SignalJniError::Jni(s) => write!(f, "JNI error {}", s),
             SignalJniError::NullHandle => write!(f, "null handle"),
             SignalJniError::BadJniParameter(m) => write!(f, "bad parameter type {}", m),
@@ -154,12 +158,23 @@ impl From<IoError> for SignalJniError {
 }
 
 #[cfg(feature = "signal-media")]
-impl From<signal_media::sanitize::Error> for SignalJniError {
-    fn from(e: signal_media::sanitize::Error) -> Self {
-        use signal_media::sanitize::Error;
+impl From<signal_media::sanitize::mp4::Error> for SignalJniError {
+    fn from(e: signal_media::sanitize::mp4::Error) -> Self {
+        use signal_media::sanitize::mp4::Error;
         match e {
             Error::Io(e) => Self::Io(e.into()),
-            Error::Parse(e) => Self::MediaSanitizeParse(e),
+            Error::Parse(e) => Self::Mp4SanitizeParse(e),
+        }
+    }
+}
+
+#[cfg(feature = "signal-media")]
+impl From<signal_media::sanitize::webp::Error> for SignalJniError {
+    fn from(e: signal_media::sanitize::webp::Error) -> Self {
+        use signal_media::sanitize::webp::Error;
+        match e {
+            Error::Io(e) => Self::Io(e.into()),
+            Error::Parse(e) => Self::WebpSanitizeParse(e),
         }
     }
 }
@@ -209,7 +224,7 @@ pub struct ThrownException {
 
 impl ThrownException {
     /// Gets the wrapped exception as a live object with a lifetime.
-    pub fn as_obj(&self) -> JThrowable<'_> {
+    pub fn as_obj(&self) -> &JThrowable<'static> {
         self.exception_ref.as_obj().into()
     }
 
@@ -222,7 +237,7 @@ impl ThrownException {
         })
     }
 
-    pub fn class_name(&self, env: &JNIEnv) -> Result<String, SignalJniError> {
+    pub fn class_name(&self, env: &mut JNIEnv) -> Result<String, SignalJniError> {
         let class_type = env.get_object_class(self.exception_ref.as_obj())?;
         let class_name: JObject = call_method_checked(
             env,
@@ -231,23 +246,23 @@ impl ThrownException {
             jni_args!(() -> java.lang.String),
         )?;
 
-        Ok(env.get_string(JString::from(class_name))?.into())
+        Ok(env.get_string(&JString::from(class_name))?.into())
     }
 
-    pub fn message(&self, env: &JNIEnv) -> Result<String, SignalJniError> {
+    pub fn message(&self, env: &mut JNIEnv) -> Result<String, SignalJniError> {
         let message: JObject = call_method_checked(
             env,
             self.exception_ref.as_obj(),
             "getMessage",
             jni_args!(() -> java.lang.String),
         )?;
-        Ok(env.get_string(JString::from(message))?.into())
+        Ok(env.get_string(&JString::from(message))?.into())
     }
 }
 
 impl fmt::Display for ThrownException {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let env = &self.jvm.attach_current_thread().map_err(|_| fmt::Error)?;
+        let env = &mut self.jvm.attach_current_thread().map_err(|_| fmt::Error)?;
 
         let exn_type = self.class_name(env);
         let exn_type = exn_type.as_deref().unwrap_or("<unknown>");
@@ -262,12 +277,12 @@ impl fmt::Display for ThrownException {
 
 impl fmt::Debug for ThrownException {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let env = &self.jvm.attach_current_thread().map_err(|_| fmt::Error)?;
+        let env = &mut self.jvm.attach_current_thread().map_err(|_| fmt::Error)?;
 
         let exn_type = self.class_name(env);
         let exn_type = exn_type.as_deref().unwrap_or("<unknown>");
 
-        let obj_addr = *self.exception_ref.as_obj();
+        let obj_addr = **self.exception_ref.as_obj();
 
         if let Ok(message) = self.message(env) {
             write!(f, "exception {} ({:p}) \"{}\"", exn_type, obj_addr, message)
