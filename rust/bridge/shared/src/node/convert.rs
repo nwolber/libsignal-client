@@ -7,7 +7,7 @@ use neon::prelude::*;
 use paste::paste;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
-use std::convert::TryInto;
+
 use std::hash::Hasher;
 use std::ops::{Deref, DerefMut, RangeInclusive};
 use std::slice;
@@ -332,6 +332,13 @@ impl SimpleArgTypeInfo for libsignal_protocol::Pni {
         libsignal_protocol::ServiceId::convert_from(cx, foreign)?
             .try_into()
             .or_else(|_| cx.throw_type_error("not a PNI"))
+    }
+}
+
+impl SimpleArgTypeInfo for bool {
+    type ArgType = JsBoolean;
+    fn convert_from(cx: &mut FunctionContext, foreign: Handle<Self::ArgType>) -> NeonResult<Self> {
+        Ok(foreign.value(cx))
     }
 }
 
@@ -688,6 +695,13 @@ impl<'a> ResultTypeInfo<'a> for libsignal_protocol::Aci {
     }
 }
 
+impl<'a> ResultTypeInfo<'a> for libsignal_protocol::Pni {
+    type ResultType = JsBuffer;
+    fn convert_into(self, cx: &mut impl Context<'a>) -> JsResult<'a, Self::ResultType> {
+        libsignal_protocol::ServiceId::from(self).convert_into(cx)
+    }
+}
+
 /// Converts `None` to `null`, passing through all other values.
 impl<'a, T: ResultTypeInfo<'a>> ResultTypeInfo<'a> for Option<T> {
     type ResultType = JsValue;
@@ -762,6 +776,58 @@ impl<'a, T: Value> ResultTypeInfo<'a> for Handle<'a, T> {
     }
 }
 
+trait OrUndefined<'a> {
+    fn or_undefined(self, cx: &mut impl Context<'a>) -> Handle<'a, JsValue>;
+}
+
+impl<'a, V: Value> OrUndefined<'a> for Option<Handle<'a, V>> {
+    fn or_undefined(self, cx: &mut impl Context<'a>) -> Handle<'a, JsValue> {
+        self.map(|v| v.as_value(cx))
+            .unwrap_or_else(|| cx.undefined().as_value(cx))
+    }
+}
+
+impl<'a> ResultTypeInfo<'a> for libsignal_net::cdsi::LookupResponse {
+    type ResultType = JsObject;
+    fn convert_into(self, cx: &mut impl Context<'a>) -> JsResult<'a, Self::ResultType> {
+        fn to_key_value<'a>(
+            cx: &mut impl Context<'a>,
+            libsignal_net::cdsi::LookupResponseEntry { e164, aci, pni }:
+             libsignal_net::cdsi::LookupResponseEntry,
+        ) -> NeonResult<(Handle<'a, JsString>, Handle<'a, JsObject>)> {
+            let e164 = cx.string(e164.to_string());
+            let value = cx.empty_object();
+
+            let pni = pni
+                .map(|s| cx.string(s.service_id_string()))
+                .or_undefined(cx);
+            let aci = aci
+                .map(|s| cx.string(s.service_id_string()))
+                .or_undefined(cx);
+            value.set(cx, "pni", pni)?;
+            value.set(cx, "aci", aci)?;
+            Ok((e164, value))
+        }
+
+        let map_constructor: Handle<'_, JsFunction> =
+            cx.global().get(cx, "Map").expect("Map constructor exists");
+        let num_elements = self.records.len().try_into().expect("< u32::MAX");
+
+        // Construct a JS Map by calling its constructor with an array of [K, V] arrays.
+        let entries = JsArray::new(cx, num_elements);
+        for (record, i) in self.records.into_iter().zip(0..) {
+            let (key, value) = to_key_value(cx, record)?;
+            let entry = JsArray::new(cx, 2);
+            entry.set(cx, 0, key)?;
+            entry.set(cx, 1, value)?;
+            entries.set(cx, i, entry)?;
+        }
+
+        let iterable = entries.as_value(cx);
+        map_constructor.construct(cx, [iterable])
+    }
+}
+
 macro_rules! full_range_integer {
     ($typ:ty) => {
         #[doc = "Converts all valid integer values for the type."]
@@ -796,12 +862,15 @@ macro_rules! full_range_integer {
 }
 
 full_range_integer!(u8);
+full_range_integer!(u16);
 full_range_integer!(u32);
 full_range_integer!(i32);
 
 impl<T> SimpleArgTypeInfo for Serialized<T>
 where
-    T: FixedLengthBincodeSerializable + for<'a> serde::Deserialize<'a>,
+    T: FixedLengthBincodeSerializable
+        + for<'a> serde::Deserialize<'a>
+        + partial_default::PartialDefault,
 {
     type ArgType = JsBuffer;
 
@@ -812,7 +881,7 @@ where
             "{} should have been validated on creation",
             std::any::type_name::<T>()
         );
-        let result: T = bincode::deserialize(bytes).unwrap_or_else(|_| {
+        let result: T = zkgroup::deserialize(bytes).unwrap_or_else(|_| {
             panic!(
                 "{} should have been validated on creation",
                 std::any::type_name::<T>()
@@ -829,7 +898,7 @@ where
     type ResultType = JsBuffer;
 
     fn convert_into(self, cx: &mut impl Context<'a>) -> JsResult<'a, Self::ResultType> {
-        let result = bincode::serialize(self.deref()).expect("can always serialize a value");
+        let result = zkgroup::serialize(self.deref());
         result.convert_into(cx)
     }
 }

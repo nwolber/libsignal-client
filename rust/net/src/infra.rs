@@ -18,7 +18,7 @@ use crate::infra::dns::DnsResolver;
 use crate::infra::errors::NetError;
 
 pub mod certs;
-pub(crate) mod connection_manager;
+pub mod connection_manager;
 pub mod dns;
 pub mod errors;
 pub(crate) mod http;
@@ -41,7 +41,7 @@ pub enum HttpRequestDecorator {
     Generic(fn(hyper::http::request::Builder) -> hyper::http::request::Builder),
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct HttpRequestDecoratorSeq(Vec<HttpRequestDecorator>);
 
 impl From<HttpRequestDecorator> for HttpRequestDecoratorSeq {
@@ -59,7 +59,7 @@ impl From<HttpRequestDecorator> for HttpRequestDecoratorSeq {
 /// - `dns_resolver`, a [DnsResolver] to use when resolving DNS.
 /// This is also applicable to WebSocket connections (in this case, `http_request_decorator` will
 /// only be apllied to the initial connection upgrade request).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConnectionParams {
     pub sni: Arc<str>,
     pub host: Arc<str>,
@@ -70,6 +70,25 @@ pub struct ConnectionParams {
 }
 
 impl ConnectionParams {
+    #[cfg(test)]
+    fn new(
+        sni: &str,
+        host: &str,
+        port: u16,
+        http_request_decorator: HttpRequestDecoratorSeq,
+        certs: RootCertificates,
+        dns_resolver: DnsResolver,
+    ) -> Self {
+        Self {
+            sni: Arc::from(sni),
+            host: Arc::from(host),
+            port,
+            http_request_decorator,
+            certs,
+            dns_resolver,
+        }
+    }
+
     pub fn with_decorator(mut self, decorator: HttpRequestDecorator) -> Self {
         let HttpRequestDecoratorSeq(decorators) = &mut self.http_request_decorator;
         decorators.push(decorator);
@@ -163,11 +182,44 @@ pub(crate) fn client_ssl_connector_builder(
 }
 
 #[cfg(test)]
-mod test {
+pub(crate) mod test {
     use hyper::Request;
 
     use crate::infra::HttpRequestDecorator;
     use crate::utils::basic_authorization;
+
+    pub(crate) mod shared {
+        use crate::infra::errors::LogSafeDisplay;
+        use displaydoc::Display;
+        use std::time::Duration;
+
+        #[derive(Debug, Display)]
+        pub(crate) enum TestError {
+            /// expected error
+            Expected,
+            /// unexpected error
+            Unexpected,
+        }
+
+        impl LogSafeDisplay for TestError {}
+
+        // the choice of the constant value is dictated by a vague notion of being
+        // "not too many, but also not just once or twice"
+        pub(crate) const FEW_ATTEMPTS: u16 = 3;
+
+        pub(crate) const MANY_ATTEMPTS: u16 = 1000;
+
+        pub(crate) const TIMEOUT_DURATION: Duration = Duration::from_millis(100);
+
+        pub(crate) const NORMAL_CONNECTION_TIME: Duration = Duration::from_millis(20);
+
+        pub(crate) const LONG_CONNECTION_TIME: Duration = Duration::from_secs(10);
+
+        // we need to advance time in tests by some value not to run into the scenario
+        // of attempts starting at the same time, but also by not too much so that we
+        // don't step over the cool down time
+        pub(crate) const TIME_ADVANCE_VALUE: Duration = Duration::from_millis(5);
+    }
 
     #[test]
     fn test_path_prefix_decorator() {

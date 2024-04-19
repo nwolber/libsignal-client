@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use std::convert::TryInto;
-
 use crate::common::constants::*;
 use crate::common::errors::*;
 use crate::common::sho::*;
@@ -13,6 +11,7 @@ use crate::{api, crypto};
 use aes_gcm_siv::aead::generic_array::GenericArray;
 use aes_gcm_siv::aead::Aead;
 use aes_gcm_siv::{Aes256GcmSiv, KeyInit};
+use partial_default::PartialDefault;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Serialize, Deserialize, Default)]
@@ -20,7 +19,7 @@ pub struct GroupMasterKey {
     pub(crate) bytes: [u8; GROUP_MASTER_KEY_LEN],
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, PartialDefault)]
 pub struct GroupSecretParams {
     reserved: ReservedBytes,
     master_key: GroupMasterKey,
@@ -30,7 +29,7 @@ pub struct GroupSecretParams {
     pub(crate) profile_key_enc_key_pair: crypto::profile_key_encryption::KeyPair,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, PartialDefault)]
 pub struct GroupPublicParams {
     reserved: ReservedBytes,
     group_id: GroupIdentifierBytes,

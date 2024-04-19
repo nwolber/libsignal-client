@@ -10,6 +10,7 @@ use crate::common::sho::*;
 use crate::common::simple_types::*;
 use crate::crypto::profile_key_struct;
 use curve25519_dalek::ristretto::RistrettoPoint;
+use partial_default::PartialDefault;
 use serde::{Deserialize, Serialize};
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
@@ -19,10 +20,10 @@ use zkcredential::attributes::Attribute;
 
 lazy_static! {
     static ref SYSTEM_PARAMS: SystemParams =
-        bincode::deserialize::<SystemParams>(&SystemParams::SYSTEM_HARDCODED).unwrap();
+        crate::deserialize::<SystemParams>(&SystemParams::SYSTEM_HARDCODED).unwrap();
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, PartialDefault)]
 pub struct SystemParams {
     pub(crate) G_b1: RistrettoPoint,
     pub(crate) G_b2: RistrettoPoint,
@@ -81,7 +82,7 @@ impl ProfileKeyEncryptionDomain {
 
         let target_M3 = key_pair.a1.invert() * ciphertext.as_points()[0];
 
-        let mut retval: profile_key_struct::ProfileKeyStruct = Default::default();
+        let mut retval: profile_key_struct::ProfileKeyStruct = PartialDefault::partial_default();
         let mut n_found = 0;
         #[allow(clippy::needless_range_loop)]
         for i in 0..8 {
