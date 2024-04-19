@@ -280,6 +280,32 @@ dependencies = [
   "variant_count",
   "x25519-dalek",
 ]
+dependencies = [
+  "asn1",
+  "bitflags 2.4.1",
+  "boring",
+  "chacha20poly1305 0.10.1",
+  "chrono",
+  "ciborium",
+  "displaydoc",
+  "hex",
+  "hex-literal",
+  "lazy_static",
+  "libc",
+  "log",
+  "prost",
+  "prost-build",
+  "rand_core",
+  "serde",
+  "serde_json",
+  "sha2",
+  "snow",
+  "static_assertions",
+  "subtle",
+  "uuid",
+  "variant_count",
+  "x25519-dalek",
+]
 name = "attest"
 version = "0.1.0"
 
@@ -837,9 +863,22 @@ dependencies = [
   "subtle",
   "zeroize",
 ]
+dependencies = [
+  "cfg-if",
+  "cpufeatures",
+  "curve25519-dalek-derive",
+  "digest",
+  "fiat-crypto",
+  "platforms",
+  "rand_core",
+  "rustc_version",
+  "serde",
+  "subtle",
+  "zeroize",
+]
 name = "curve25519-dalek"
-source = "git+https://github.com/signalapp/curve25519-dalek?tag=signal-curve25519-4.0.0#463e5c7cba32561ffee8a281c4455ff3c25660d4"
-version = "4.0.0"
+source = "git+https://github.com/signalapp/curve25519-dalek?tag=signal-curve25519-4.1.1#a12ab4e58455bb3dc7cd73a0f9f3443507b2854b"
+version = "4.1.1"
 
 [[package]]
 dependencies = [
@@ -848,7 +887,10 @@ dependencies = [
   "syn 2.0.38",
 ]
 name = "curve25519-dalek-derive"
+name = "curve25519-dalek-derive"
+source = "git+https://github.com/signalapp/curve25519-dalek?tag=signal-curve25519-4.1.1#a12ab4e58455bb3dc7cd73a0f9f3443507b2854b"
 source = "git+https://github.com/signalapp/curve25519-dalek?tag=signal-curve25519-4.0.0#463e5c7cba32561ffee8a281c4455ff3c25660d4"
+version = "0.1.0"
 version = "0.1.0"
 
 [[package]]
@@ -1108,10 +1150,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 version = "2.0.1"
 
 [[package]]
-checksum = "e825f6987101665dea6ec934c09ec6d721de7bc1bf92248e1d5810c8cd636b77"
+checksum = "27573eac26f4dd11e2b1916c3fe1baa56407c83c71a773a8ba17ec0bca03b6b7"
 name = "fiat-crypto"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-version = "0.1.20"
+version = "0.2.5"
 
 [[package]]
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
@@ -1891,8 +1933,26 @@ dependencies = [
   "usernames",
   "zkgroup",
 ]
+dependencies = [
+  "async-trait",
+  "attest",
+  "cpufeatures",
+  "device-transfer",
+  "futures-util",
+  "libc",
+  "libsignal-bridge",
+  "libsignal-protocol",
+  "log",
+  "log-panics",
+  "rand",
+  "signal-crypto",
+  "signal-media",
+  "signal-pin",
+  "usernames",
+  "zkgroup",
+]
 name = "libsignal-ffi"
-version = "0.35.0"
+version = "0.36.1"
 
 [[package]]
 dependencies = [
@@ -1931,8 +1991,20 @@ dependencies = [
   "rand",
   "signal-crypto",
 ]
+dependencies = [
+  "async-trait",
+  "cfg-if",
+  "cpufeatures",
+  "jni",
+  "libsignal-bridge",
+  "libsignal-protocol",
+  "log",
+  "log-panics",
+  "rand",
+  "signal-crypto",
+]
 name = "libsignal-jni"
-version = "0.35.0"
+version = "0.36.1"
 
 [[package]]
 dependencies = [
@@ -2031,6 +2103,44 @@ dependencies = [
   "uuid",
   "warp",
 ]
+dependencies = [
+  "assert_matches",
+  "async-trait",
+  "attest",
+  "base64",
+  "boring",
+  "bytes",
+  "derive-where",
+  "displaydoc",
+  "env_logger",
+  "futures-util",
+  "hex",
+  "hex-literal",
+  "http",
+  "http-body-util",
+  "hyper 1.0.0-rc.4",
+  "lazy_static",
+  "libsignal-protocol",
+  "log",
+  "pin-project-lite",
+  "prost",
+  "prost-build",
+  "rand",
+  "rustls-native-certs",
+  "serde",
+  "serde_json",
+  "snow",
+  "thiserror",
+  "tokio",
+  "tokio-boring",
+  "tokio-stream",
+  "tokio-tungstenite 0.19.0",
+  "tokio-util",
+  "tungstenite 0.19.0",
+  "url",
+  "uuid",
+  "warp",
+]
 name = "libsignal-net"
 version = "0.1.0"
 
@@ -2068,8 +2178,19 @@ dependencies = [
   "rand",
   "signal-neon-futures",
 ]
+dependencies = [
+  "async-trait",
+  "cmake",
+  "libsignal-bridge",
+  "libsignal-protocol",
+  "log",
+  "log-panics",
+  "neon",
+  "rand",
+  "signal-neon-futures",
+]
 name = "libsignal-node"
-version = "0.35.0"
+version = "0.36.1"
 
 [[package]]
 dependencies = [
@@ -2178,14 +2299,36 @@ name = "libsignal-protocol"
 version = "0.1.0"
 
 [[package]]
+dependencies = [
+  "attest",
+  "bytemuck",
+  "criterion",
+  "curve25519-dalek",
+  "displaydoc",
+  "hex",
+  "hex-literal",
+  "hkdf",
+  "libsignal-net",
+  "rand",
+  "rand_core",
+  "sha2",
+  "subtle",
+]
+name = "libsignal-svr3"
+version = "0.1.0"
+
+[[package]]
 checksum = "91ed2ee9464ff9707af8e9ad834cffa4802f072caad90639c583dd3c62e6e608"
 dependencies = [
   "linkme-impl",
 ]
 name = "linkme"
 name = "linkme"
+name = "linkme"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+version = "0.3.17"
 version = "0.3.17"
 version = "0.3.16"
 
