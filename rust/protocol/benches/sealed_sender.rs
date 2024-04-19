@@ -170,6 +170,7 @@ pub fn v2(c: &mut Criterion) {
                 .session_store
                 .load_existing_sessions(&[&bob_address])
                 .expect("present"),
+            [],
             &usmc,
             &alice_store.identity_store,
             &mut rng,
@@ -204,6 +205,7 @@ pub fn v2(c: &mut Criterion) {
                     .session_store
                     .load_existing_sessions(&[&bob_address])
                     .expect("present"),
+                [],
                 &usmc,
                 &alice_store.identity_store,
                 &mut rng,
@@ -232,7 +234,7 @@ pub fn v2(c: &mut Criterion) {
 
     // Fill out additional recipients.
     let mut recipients = vec![bob_address.clone()];
-    while recipients.len() < 10 {
+    while recipients.len() < 1000 {
         let next_address = ProtocolAddress::new(Uuid::from_bytes(rng.gen()).to_string(), 1.into());
 
         let mut next_store = support::test_in_memory_protocol_store().expect("brand new store");
@@ -258,7 +260,7 @@ pub fn v2(c: &mut Criterion) {
     }
 
     let mut group = c.benchmark_group("v2/encrypt/multi-recipient");
-    for recipient_count in [2, 5, 10] {
+    for recipient_count in [2, 5, 10, 100, 1000] {
         group.bench_with_input(
             BenchmarkId::from_parameter(recipient_count),
             &recipient_count,
@@ -271,6 +273,7 @@ pub fn v2(c: &mut Criterion) {
                             .session_store
                             .load_existing_sessions(&recipients)
                             .expect("present"),
+                        [],
                         &usmc,
                         &alice_store.identity_store,
                         &mut rng,
@@ -298,6 +301,7 @@ pub fn v2(c: &mut Criterion) {
                             .session_store
                             .load_existing_sessions(&recipients)
                             .expect("present"),
+                        [],
                         &usmc,
                         &alice_store.identity_store,
                         &mut rng,

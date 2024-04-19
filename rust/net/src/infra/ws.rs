@@ -20,13 +20,15 @@ use tungstenite::handshake::client::generate_key;
 use tungstenite::protocol::CloseFrame;
 use tungstenite::{http, Message};
 
-use attest::client_connection::ClientConnection;
-use attest::sgx_session::Handshake;
-
 use crate::infra::errors::NetError;
 use crate::infra::reconnect::{ServiceConnector, ServiceStatus};
 use crate::infra::{AsyncDuplexStream, ConnectionParams, TransportConnector};
 use crate::utils::timeout;
+use attest::client_connection::ClientConnection;
+use attest::enclave;
+
+pub mod error;
+pub use error::Error;
 
 const WS_ALPN: &[u8] = b"\x08http/1.1";
 
@@ -171,15 +173,25 @@ impl<S: AsyncDuplexStream> WebSocketClientReader<S> {
                         continue;
                     }
                     Event::Message(maybe_message) => maybe_message,
-                    Event::StopService => return Err(NetError::ChannelClosed),
-                    Event::IdleTimeout => return Err(NetError::ChannelIdle),
+                    Event::StopService => {
+                        log::info!("service was stopped");
+                        return Err(NetError::ChannelClosed);
+                    }
+                    Event::IdleTimeout => {
+                        log::warn!("channel was idle for {}s", self.max_idle_time.as_secs());
+                        return Err(NetError::ChannelIdle);
+                    }
                 };
                 // now checking if whatever we've read from the stream is a message
                 let message = match maybe_message {
                     None | Some(Err(tungstenite::Error::ConnectionClosed)) => {
-                        return Ok(NextOrClose::Close(None))
+                        log::warn!("websocket connection was unexpectedly closed");
+                        return Ok(NextOrClose::Close(None));
                     }
-                    Some(Err(e)) => return Err(e.into()),
+                    Some(Err(e)) => {
+                        log::trace!("websocket error: {e}");
+                        return Err(e.into());
+                    }
                     Some(Ok(message)) => message,
                 };
                 // finally, looking at the type of the message
@@ -275,11 +287,13 @@ impl From<String> for TextOrBinary {
         Self::Text(value)
     }
 }
+
 impl From<Vec<u8>> for TextOrBinary {
     fn from(value: Vec<u8>) -> Self {
         Self::Binary(value)
     }
 }
+
 impl From<TextOrBinary> for Message {
     fn from(value: TextOrBinary) -> Self {
         match value {
@@ -331,12 +345,12 @@ impl<S: AsyncDuplexStream> WebSocketClient<S> {
 pub enum AttestedConnectionError {
     Protocol,
     ClientConnection(attest::client_connection::Error),
-    Sgx(attest::sgx_session::Error),
+    Sgx(attest::enclave::Error),
     Net(NetError),
 }
 
-impl From<attest::sgx_session::Error> for AttestedConnectionError {
-    fn from(value: attest::sgx_session::Error) -> Self {
+impl From<enclave::Error> for AttestedConnectionError {
+    fn from(value: attest::enclave::Error) -> Self {
         Self::Sgx(value)
     }
 }
@@ -353,11 +367,28 @@ impl From<attest::client_connection::Error> for AttestedConnectionError {
     }
 }
 
+pub type DefaultStream = tokio_boring::SslStream<tokio::net::TcpStream>;
+
 /// Encrypted connection to an attested host.
 #[derive(Debug)]
-pub struct AttestedConnection<S = tokio_boring::SslStream<tokio::net::TcpStream>> {
+pub struct AttestedConnection<S = DefaultStream> {
     websocket: WebSocketClient<S>,
     client_connection: ClientConnection,
+}
+
+impl AsMut<AttestedConnection> for AttestedConnection {
+    fn as_mut(&mut self) -> &mut AttestedConnection {
+        self
+    }
+}
+
+pub(crate) async fn run_attested_interaction<C: AsMut<AttestedConnection>, B: AsRef<[u8]>>(
+    connection: &mut C,
+    bytes: B,
+) -> Result<NextOrClose<Vec<u8>>, AttestedConnectionError> {
+    let connection = connection.as_mut();
+    connection.send_bytes(bytes).await?;
+    connection.receive_bytes().await
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -368,7 +399,7 @@ pub(crate) enum NextOrClose<T> {
 }
 
 impl<T> NextOrClose<T> {
-    pub(crate) fn next_or<E>(self, failure: E) -> Result<T, E> {
+    pub fn next_or<E>(self, failure: E) -> Result<T, E> {
         match self {
             Self::Close(_) => Err(failure),
             Self::Next(t) => Ok(t),
@@ -383,7 +414,7 @@ where
     /// Connect to remote host and verify remote attestation.
     pub(crate) async fn connect(
         mut websocket: WebSocketClient<S>,
-        new_handshake: impl FnOnce(&[u8]) -> Result<Handshake, attest::sgx_session::Error>,
+        new_handshake: impl FnOnce(&[u8]) -> enclave::Result<enclave::Handshake>,
     ) -> Result<Self, AttestedConnectionError> {
         let client_connection = authenticate(&mut websocket, new_handshake).await?;
 
@@ -398,7 +429,14 @@ where
         request: impl prost::Message,
     ) -> Result<(), AttestedConnectionError> {
         let request = request.encode_to_vec();
-        let request = self.client_connection.send(&request)?;
+        self.send_bytes(request).await
+    }
+
+    pub(crate) async fn send_bytes<B: AsRef<[u8]>>(
+        &mut self,
+        bytes: B,
+    ) -> Result<(), AttestedConnectionError> {
+        let request = self.client_connection.send(bytes.as_ref())?;
         self.websocket
             .send(request.into())
             .await
@@ -443,7 +481,7 @@ impl TextOrBinary {
 
 async fn authenticate<S: AsyncDuplexStream>(
     websocket: &mut WebSocketClient<S>,
-    new_handshake: impl FnOnce(&[u8]) -> Result<Handshake, attest::sgx_session::Error>,
+    new_handshake: impl FnOnce(&[u8]) -> enclave::Result<enclave::Handshake>,
 ) -> Result<ClientConnection, AttestedConnectionError> {
     let attestation_msg = websocket
         .receive()
@@ -667,10 +705,8 @@ mod test {
             attest::sgx_session::testutil::private_key(),
         ));
 
-        fn fail_to_handshake(
-            _attestation: &[u8],
-        ) -> attest::sgx_session::Result<attest::sgx_session::Handshake> {
-            Err(attest::sgx_session::Error::AttestationDataError {
+        fn fail_to_handshake(_attestation: &[u8]) -> attest::enclave::Result<enclave::Handshake> {
+            Err(attest::enclave::Error::AttestationDataError {
                 reason: "invalid".to_string(),
             })
         }

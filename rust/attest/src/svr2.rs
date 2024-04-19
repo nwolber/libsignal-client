@@ -8,9 +8,8 @@ use hex_literal::hex;
 use prost::Message;
 
 use crate::dcap::MREnclave;
+use crate::enclave::{Error, Handshake, Result};
 use crate::proto::svr2;
-use crate::sgx_session;
-use crate::sgx_session::{Error, Result};
 use crate::util::SmallMap;
 
 /// Map from MREnclave to intel SW advisories that are known to be mitigated in the
@@ -41,11 +40,11 @@ const DEFAULT_SW_ADVISORIES: &[&str] = &[];
 
 /// A RaftConfig that can be checked against the attested remote config
 #[derive(Debug)]
-struct RaftConfig {
-    min_voting_replicas: u32,
-    max_voting_replicas: u32,
-    super_majority: u32,
-    group_id: u64,
+pub struct RaftConfig {
+    pub min_voting_replicas: u32,
+    pub max_voting_replicas: u32,
+    pub super_majority: u32,
+    pub group_id: u64,
 }
 
 impl PartialEq<svr2::RaftGroupConfig> for RaftConfig {
@@ -97,14 +96,6 @@ static EXPECTED_RAFT_CONFIG: SmallMap<MREnclave, &'static RaftConfig, 4> = Small
     ),
 ]);
 
-pub struct Svr2Handshake {
-    /// The attested handshake that can be used to establish a noise connection
-    pub handshake: sgx_session::Handshake,
-
-    /// The group_id of the SVR2 raft group we are handshaking with
-    pub group_id: u64,
-}
-
 /// Lookup the group id constant associated with the `mrenclave`
 pub fn lookup_groupid(mrenclave: &[u8]) -> Option<u64> {
     EXPECTED_RAFT_CONFIG
@@ -116,7 +107,21 @@ pub fn new_handshake(
     mrenclave: &[u8],
     attestation_msg: &[u8],
     current_time: std::time::SystemTime,
-) -> Result<sgx_session::Handshake> {
+) -> Result<Handshake> {
+    new_handshake_with_override(mrenclave, attestation_msg, current_time, None)
+}
+
+pub fn new_handshake_with_override(
+    mrenclave: &[u8],
+    attestation_msg: &[u8],
+    current_time: std::time::SystemTime,
+    raft_config_override: Option<&'static RaftConfig>,
+) -> Result<Handshake> {
+    let expected_raft_config = raft_config_override
+        .or_else(|| EXPECTED_RAFT_CONFIG.get(mrenclave).copied())
+        .ok_or(Error::AttestationDataError {
+            reason: format!("unknown mrenclave {:?}", mrenclave),
+        })?;
     new_handshake_with_constants(
         mrenclave,
         attestation_msg,
@@ -124,11 +129,7 @@ pub fn new_handshake(
         ACCEPTABLE_SW_ADVISORIES
             .get(mrenclave)
             .unwrap_or(&DEFAULT_SW_ADVISORIES),
-        *EXPECTED_RAFT_CONFIG
-            .get(mrenclave)
-            .ok_or(Error::AttestationDataError {
-                reason: format!("unknown mrenclave {:?}", mrenclave),
-            })?,
+        expected_raft_config,
     )
 }
 
@@ -138,10 +139,10 @@ fn new_handshake_with_constants(
     current_time: std::time::SystemTime,
     acceptable_sw_advisories: &[&str],
     expected_raft_config: &RaftConfig,
-) -> Result<sgx_session::Handshake> {
+) -> Result<Handshake> {
     // Deserialize attestation handshake start.
     let handshake_start = svr2::ClientHandshakeStart::decode(attestation_msg)?;
-    let handshake = sgx_session::Handshake::new(
+    let handshake = Handshake::for_sgx(
         mrenclave,
         &handshake_start.evidence,
         &handshake_start.endorsement,
@@ -159,7 +160,10 @@ fn new_handshake_with_constants(
     let actual_config = svr2::RaftGroupConfig::decode(&**config)?;
     if expected_raft_config != &actual_config {
         return Err(Error::AttestationDataError {
-            reason: format!("Unexpected raft config {:?}", expected_raft_config),
+            reason: format!(
+                "Unexpected raft config {:?} (expected {:?})",
+                actual_config, expected_raft_config
+            ),
         });
     }
 

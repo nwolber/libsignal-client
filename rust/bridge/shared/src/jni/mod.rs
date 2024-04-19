@@ -6,8 +6,8 @@
 use jni::objects::{GlobalRef, JThrowable, JValue, JValueOwned};
 use jni::JavaVM;
 
+use attest::enclave::Error as SgxError;
 use attest::hsm_enclave::Error as HsmEnclaveError;
-use attest::sgx_session::Error as SgxError;
 use device_transfer::Error as DeviceTransferError;
 use libsignal_protocol::*;
 use signal_crypto::Error as SignalCryptoError;
@@ -364,7 +364,7 @@ where
         | SignalJniError::Sgx(SgxError::NoiseError(_)) => {
             jni_class_name!(org.signal.libsignal.attest.SgxCommunicationFailureException)
         }
-        SignalJniError::Sgx(SgxError::DcapError(_)) => {
+        SignalJniError::Sgx(SgxError::AttestationError(_)) => {
             jni_class_name!(org.signal.libsignal.attest.DcapException)
         }
         SignalJniError::Sgx(SgxError::AttestationDataError { .. }) => {
@@ -756,10 +756,13 @@ impl<'a> CiphertextMessageRef<'a> {
 macro_rules! jni_bridge_destroy {
     ( $typ:ty as $jni_name:ident ) => {
         paste! {
-            #[no_mangle]
-            pub unsafe extern "C" fn [<
-                Java_org_signal_libsignal_internal_Native_ $jni_name _1Destroy
-            >](
+            #[export_name = concat!(
+                env!("LIBSIGNAL_BRIDGE_FN_PREFIX_JNI"),
+                stringify!($jni_name),
+                "_1Destroy"
+            )]
+            #[allow(non_snake_case)]
+            pub unsafe extern "C" fn [<__bridge_handle_jni_ $jni_name _destroy>](
                 _env: jni::JNIEnv,
                 _class: jni::JClass,
                 handle: jni::ObjectHandle,

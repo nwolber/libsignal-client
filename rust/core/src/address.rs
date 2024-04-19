@@ -10,9 +10,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[cfg(doc)]
-use crate::SignalMessage;
-
 use std::fmt;
 
 /// Known types of [ServiceId].
@@ -67,8 +64,13 @@ impl<const KIND: u8> SpecificServiceId<KIND> {
     ///
     /// Prefer `from(Uuid)` / `Uuid::into` if you already have a strongly-typed UUID.
     #[inline]
-    pub fn from_uuid_bytes(bytes: [u8; 16]) -> Self {
-        uuid::Uuid::from_bytes(bytes).into()
+    pub const fn from_uuid_bytes(bytes: [u8; 16]) -> Self {
+        Self::from_uuid(uuid::Uuid::from_bytes(bytes))
+    }
+
+    #[inline]
+    const fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
     }
 }
 
@@ -127,7 +129,7 @@ where
 impl<const KIND: u8> From<Uuid> for SpecificServiceId<KIND> {
     #[inline]
     fn from(value: Uuid) -> Self {
-        Self(value)
+        Self::from_uuid(value)
     }
 }
 
@@ -175,8 +177,9 @@ pub enum ServiceId {
 }
 
 impl ServiceId {
+    /// The kind of service ID `self` is.
     #[inline]
-    fn kind(&self) -> ServiceIdKind {
+    pub fn kind(&self) -> ServiceIdKind {
         match self {
             ServiceId::Aci(_) => ServiceIdKind::Aci,
             ServiceId::Pni(_) => ServiceIdKind::Pni,
@@ -336,6 +339,24 @@ impl<const KIND: u8> TryFrom<ServiceId> for SpecificServiceId<KIND> {
     }
 }
 
+impl<const KIND: u8> PartialEq<ServiceId> for SpecificServiceId<KIND>
+where
+    ServiceId: From<SpecificServiceId<KIND>>,
+{
+    fn eq(&self, other: &ServiceId) -> bool {
+        ServiceId::from(*self) == *other
+    }
+}
+
+impl<const KIND: u8> PartialEq<SpecificServiceId<KIND>> for ServiceId
+where
+    ServiceId: From<SpecificServiceId<KIND>>,
+{
+    fn eq(&self, other: &SpecificServiceId<KIND>) -> bool {
+        *self == ServiceId::from(*other)
+    }
+}
+
 #[cfg(test)]
 mod service_id_tests {
     use proptest::prelude::*;
@@ -351,6 +372,8 @@ mod service_id_tests {
         let aci = Aci::from(uuid);
         assert_eq!(uuid, Uuid::from(aci));
         let aci_service_id = ServiceId::from(aci);
+        assert_eq!(aci, aci_service_id);
+        assert_eq!(aci_service_id, aci);
         assert_eq!(Ok(aci), Aci::try_from(aci_service_id));
         assert_eq!(
             Err(WrongKindOfServiceIdError {
@@ -359,10 +382,13 @@ mod service_id_tests {
             }),
             Pni::try_from(aci_service_id)
         );
+        assert_eq!(ServiceIdKind::Aci, aci_service_id.kind());
 
         let pni = Pni::from(uuid);
         assert_eq!(uuid, Uuid::from(pni));
         let pni_service_id = ServiceId::from(pni);
+        assert_eq!(pni, pni_service_id);
+        assert_eq!(pni_service_id, pni);
         assert_eq!(Ok(pni), Pni::try_from(pni_service_id));
         assert_eq!(
             Err(WrongKindOfServiceIdError {
@@ -371,6 +397,9 @@ mod service_id_tests {
             }),
             Aci::try_from(pni_service_id)
         );
+        assert_eq!(ServiceIdKind::Pni, pni_service_id.kind());
+
+        assert_ne!(aci_service_id, pni_service_id);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -399,7 +428,7 @@ mod service_id_tests {
             let deserialized = deserialize(serialized.borrow()).expect("just serialized");
             assert_eq!(ServiceIdKind::Aci, deserialized.kind());
             assert_eq!(uuid, deserialized.raw_uuid());
-            assert_eq!(aci, deserialized.try_into().expect("type matches"));
+            assert_eq!(aci, Aci::try_from(deserialized).expect("type matches"));
             assert_eq!(Some(aci), deserialize_aci(serialized.borrow()));
             assert_eq!(None, deserialize_pni(serialized.borrow()));
         }
@@ -414,7 +443,7 @@ mod service_id_tests {
             let deserialized = deserialize(serialized.borrow()).expect("just serialized");
             assert_eq!(ServiceIdKind::Pni, deserialized.kind());
             assert_eq!(uuid, deserialized.raw_uuid());
-            assert_eq!(pni, deserialized.try_into().expect("type matches"));
+            assert_eq!(pni, Pni::try_from(deserialized).expect("type matches"));
             assert_eq!(Some(pni), deserialize_pni(serialized.borrow()));
             assert_eq!(None, deserialize_aci(serialized.borrow()));
         }
@@ -613,11 +642,8 @@ mod service_id_tests {
 ///
 /// Used in [ProtocolAddress].
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct DeviceId(u32);
 
 impl From<u32> for DeviceId {
@@ -654,7 +680,7 @@ impl ProtocolAddress {
     ///   all clients for that user.
     ///
     ///```
-    /// use libsignal_protocol::{DeviceId, ProtocolAddress};
+    /// use libsignal_core::{DeviceId, ProtocolAddress};
     ///
     /// // This is a unique id for some user, typically a UUID.
     /// let user_id: String = "04899A85-4C9E-44CC-8428-A02AB69335F1".to_string();
@@ -677,9 +703,9 @@ impl ProtocolAddress {
 
     /// An identifier representing a particular Signal client instance to send to.
     ///
-    /// For example, if a user has set up Signal on both their phone and laptop, any [SignalMessage]
-    /// sent to the user will still only go to a single device. So when a user sends a message to
-    /// another user at all, they're actually sending a message to *every* device.
+    /// For example, if a user has set up Signal on both their phone and laptop, a particular
+    /// message sent to the user will still only go to a single device. So when a user sends a
+    /// message to another user at all, they're actually sending a message to *every* device.
     #[inline]
     pub fn device_id(&self) -> DeviceId {
         self.device_id

@@ -22,7 +22,6 @@
 // https://doc.rust-lang.org/rustdoc/what-to-include.html for background.
 // #![warn(missing_docs)]
 
-pub mod address;
 mod consts;
 pub mod crypto;
 mod curve;
@@ -43,12 +42,14 @@ mod state;
 mod storage;
 mod utils;
 
-pub use address::{
-    Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind,
+pub use error::Result;
+
+pub use libsignal_core::{
+    Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind, WrongKindOfServiceIdError,
 };
-pub use crypto::hmac_sha256;
+
 pub use curve::{KeyPair, PrivateKey, PublicKey};
-pub use error::{Result, SignalProtocolError};
+pub use error::SignalProtocolError;
 pub use fingerprint::{DisplayableFingerprint, Fingerprint, ScannableFingerprint};
 pub use group_cipher::{
     create_sender_key_distribution_message, group_decrypt, group_encrypt,

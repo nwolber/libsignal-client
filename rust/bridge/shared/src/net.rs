@@ -5,14 +5,15 @@
 
 use std::convert::TryInto as _;
 use std::future::Future;
-use std::num::ParseIntError;
 use std::time::Duration;
 
 use libsignal_bridge_macros::{bridge_fn, bridge_io};
 use libsignal_net::cdsi::{
     self, AciAndAccessKey, Auth, CdsiConnection, ClientResponseCollector, LookupResponse, Token,
+    E164,
 };
-use libsignal_net::env::{CdsiEndpointConnection, Env};
+use libsignal_net::enclave::{Cdsi, EndpointConnection};
+use libsignal_net::env::{Env, Svr3Env};
 use libsignal_net::infra::certs::RootCertificates;
 use libsignal_net::infra::connection_manager::MultiRouteConnectionManager;
 use libsignal_net::infra::dns::DnsResolver;
@@ -60,7 +61,7 @@ pub enum Environment {
 }
 
 impl Environment {
-    fn env(&self) -> Env<'static> {
+    fn env(&self) -> Env<'static, Svr3Env> {
         match self {
             Self::Staging => libsignal_net::env::STAGING,
             Self::Prod => libsignal_net::env::PROD,
@@ -104,7 +105,7 @@ impl Environment {
 pub struct ConnectionParamsList(Vec<ConnectionParams>);
 
 pub struct ConnectionManager {
-    cdsi: CdsiEndpointConnection<MultiRouteConnectionManager, TcpSslTransportConnector>,
+    cdsi: EndpointConnection<Cdsi, MultiRouteConnectionManager, TcpSslTransportConnector>,
 }
 
 impl ConnectionManager {
@@ -119,7 +120,7 @@ impl ConnectionManager {
             .collect();
 
         Self {
-            cdsi: CdsiEndpointConnection::new_multi(
+            cdsi: EndpointConnection::new_multi(
                 cdsi_endpoint.mr_enclave,
                 connection_params,
                 Self::DEFAULT_CONNECT_TIMEOUT,
@@ -145,29 +146,18 @@ fn LookupRequest_new() -> LookupRequest {
 }
 
 #[bridge_fn]
-fn LookupRequest_addE164(request: &LookupRequest, e164: String) -> Result<(), SignalProtocolError> {
-    let e164: libsignal_net::cdsi::E164 = e164.parse().map_err(|_: ParseIntError| {
-        SignalProtocolError::InvalidArgument(format!("{e164} is not an e164"))
-    })?;
-    request.0.lock().expect("not poisoned").new_e164s.push(e164);
-    Ok(())
+fn LookupRequest_addE164(request: &LookupRequest, e164: E164) {
+    request.0.lock().expect("not poisoned").new_e164s.push(e164)
 }
 
 #[bridge_fn]
-fn LookupRequest_addPreviousE164(
-    request: &LookupRequest,
-    e164: String,
-) -> Result<(), SignalProtocolError> {
-    let e164: libsignal_net::cdsi::E164 = e164.parse().map_err(|_: ParseIntError| {
-        SignalProtocolError::InvalidArgument(format!("{e164} is not an e164"))
-    })?;
+fn LookupRequest_addPreviousE164(request: &LookupRequest, e164: E164) {
     request
         .0
         .lock()
         .expect("not poisoned")
         .prev_e164s
-        .push(e164);
-    Ok(())
+        .push(e164)
 }
 
 #[bridge_fn]
