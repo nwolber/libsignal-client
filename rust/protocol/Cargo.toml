@@ -73,4 +73,5 @@ name = "sealed_sender"
 
 [[bench]]
 harness = false
+name = "kem"
 required-features = ["kyber768"]
