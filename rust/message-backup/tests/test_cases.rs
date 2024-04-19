@@ -3,30 +3,41 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use assert_cmd::Command;
+use assert_matches::assert_matches;
 use dir_test::{dir_test, Fixture};
-use futures::io::AllowStdIo;
+use futures::io::Cursor;
 use futures::AsyncRead;
+use libsignal_message_backup::frame::FileReaderFactory;
 use libsignal_message_backup::key::{BackupKey, MessageBackupKey};
 use libsignal_message_backup::{BackupReader, ReadResult};
 use libsignal_protocol::Aci;
 
 #[dir_test(
         dir: "$CARGO_MANIFEST_DIR/tests/res/test-cases",
-        glob: "valid/*.binproto",
-        loader: PathBuf::from,
+        glob: "valid/*.jsonproto",
         postfix: "binproto"
     )]
-fn is_valid_binproto(input: Fixture<PathBuf>) {
-    let path = input.into_content();
+fn is_valid_json_proto(input: Fixture<&str>) {
+    let json_contents = input.into_content();
+    let json_contents = serde_json::from_str(json_contents).expect("invalid JSON");
+    let json_array = assert_matches!(json_contents, serde_json::Value::Array(contents) => contents);
+    let binary =
+        libsignal_message_backup::backup::convert_from_json(json_array).expect("failed to convert");
+
     // Check via the library interface.
-    let reader = BackupReader::new_unencrypted(read_file_async(&path));
+    let input = Cursor::new(&*binary);
+    let reader = BackupReader::new_unencrypted(input);
     validate(reader);
 
     // The CLI tool should agree.
-    validator_command().arg(path).ok().expect("command failed");
+    validator_command()
+        .arg("-")
+        .write_stdin(binary)
+        .ok()
+        .expect("command failed");
 }
 
 #[dir_test(
@@ -43,11 +54,9 @@ fn is_valid_encrypted_proto(input: Fixture<PathBuf>) {
 
     let path = input.into_content();
     // Check via the library interface.
-    let reader = futures::executor::block_on(BackupReader::new_encrypted_compressed(
-        &key,
-        read_file_async(&path),
-    ))
-    .expect("invalid HMAC");
+    let factory = FileReaderFactory { path: &path };
+    let reader = futures::executor::block_on(BackupReader::new_encrypted_compressed(&key, factory))
+        .expect("invalid HMAC");
     validate(reader);
 
     // The CLI tool should agree.
@@ -61,6 +70,49 @@ fn is_valid_encrypted_proto(input: Fixture<PathBuf>) {
         ])
         .ok()
         .expect("command failed");
+}
+
+const EXPECTED_SUFFIX: &str = "jsonproto.expected";
+#[dir_test(
+    dir: "$CARGO_MANIFEST_DIR/tests/res/test-cases",
+    glob: "invalid/*.jsonproto",
+    loader: PathBuf::from
+)]
+fn invalid_jsonproto(input: Fixture<PathBuf>) {
+    let path = input.into_content();
+    let expected_path = path.with_extension(EXPECTED_SUFFIX);
+
+    let json_contents =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("failed to read"))
+            .expect("invalid JSON");
+    let json_array = assert_matches!(json_contents, serde_json::Value::Array(contents) => contents);
+    let binary =
+        libsignal_message_backup::backup::convert_from_json(json_array).expect("failed to convert");
+
+    let input = Cursor::new(&*binary);
+    let reader = BackupReader::new_unencrypted(input);
+
+    let ReadResult {
+        result,
+        found_unknown_fields: _,
+    } = futures::executor::block_on(reader.read_all());
+
+    let text = result.expect_err("unexpectedly valid").to_string();
+
+    if write_expected_error() {
+        eprintln!("writing expected value to {:?}", expected_path);
+        std::fs::write(expected_path, text).expect("failed to overwrite expected contents");
+        return;
+    }
+
+    let expected_text =
+        std::fs::read_to_string(&expected_path).expect("can't load expected contents");
+
+    assert_eq!(text, expected_text);
+}
+
+fn write_expected_error() -> bool {
+    std::env::var_os("OVERWRITE_EXPECTED_OUTPUT").is_some()
 }
 
 fn validate(mut reader: BackupReader<impl AsyncRead + Unpin>) {
@@ -78,9 +130,4 @@ fn validate(mut reader: BackupReader<impl AsyncRead + Unpin>) {
 
 fn validator_command() -> Command {
     Command::cargo_bin("validator").expect("bin not found")
-}
-
-fn read_file_async(path: &Path) -> AllowStdIo<std::fs::File> {
-    let file = std::fs::File::open(path).expect("can read");
-    AllowStdIo::new(file)
 }

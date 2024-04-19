@@ -8,20 +8,24 @@ use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 
 use crate::backup::account_data::{AccountData, AccountDataError};
+use crate::backup::call::{Call, CallError};
 use crate::backup::chat::{ChatData, ChatError, ChatItemError};
-use crate::backup::frame::{
-    CallId, ChatId, GetForeignId as _, RecipientId, RingerRecipientId, WithId,
-};
+use crate::backup::frame::{CallId, ChatId, RecipientId};
 use crate::backup::method::{Contains, KeyExists, Map as _, Method, Store, ValidateOnly};
 use crate::backup::recipient::{RecipientData, RecipientError};
+use crate::backup::sticker::{PackId as StickerPackId, StickerId, StickerPack, StickerPackError};
 use crate::proto::backup as proto;
 use crate::proto::backup::frame::Item as FrameItem;
 
 mod account_data;
+mod call;
 mod chat;
+mod file;
 mod frame;
 pub(crate) mod method;
 mod recipient;
+mod sticker;
+mod time;
 
 pub struct PartialBackup<M: Method> {
     version: u64,
@@ -29,7 +33,8 @@ pub struct PartialBackup<M: Method> {
     account_data: Option<M::Value<AccountData<M>>>,
     recipients: M::Map<RecipientId, RecipientData<M>>,
     chats: HashMap<ChatId, ChatData<M>>,
-    calls: M::Map<CallId, proto::Call>,
+    calls: M::Map<CallId, Call>,
+    sticker_packs: HashMap<StickerPackId, StickerPack>,
 }
 
 #[derive(Debug)]
@@ -39,7 +44,8 @@ pub struct Backup {
     pub account_data: Option<AccountData<Store>>,
     pub recipients: HashMap<RecipientId, RecipientData>,
     pub chats: HashMap<ChatId, ChatData>,
-    pub calls: HashMap<CallId, proto::Call>,
+    pub calls: HashMap<CallId, Call>,
+    pub sticker_packs: HashMap<StickerPackId, StickerPack>,
 }
 
 impl From<PartialBackup<Store>> for Backup {
@@ -51,6 +57,7 @@ impl From<PartialBackup<Store>> for Backup {
             recipients,
             chats,
             calls,
+            sticker_packs,
         } = value;
 
         Self {
@@ -60,6 +67,7 @@ impl From<PartialBackup<Store>> for Backup {
             recipients,
             chats,
             calls,
+            sticker_packs,
         }
     }
 }
@@ -78,6 +86,8 @@ pub enum ValidationError {
     ChatError(#[from] ChatFrameError),
     /// {0}
     CallError(#[from] CallFrameError),
+    /// {0}
+    StickerError(#[from] StickerError),
 }
 
 #[derive(Debug, displaydoc::Display, thiserror::Error)]
@@ -87,16 +97,6 @@ pub struct ChatFrameError(ChatId, ChatError);
 /// call data {0:?} error: {1}
 #[derive(Debug, displaydoc::Display, thiserror::Error)]
 pub struct CallFrameError(CallId, CallError);
-
-#[derive(Debug, displaydoc::Display, thiserror::Error)]
-pub enum CallError {
-    /// multiple records with the same ID
-    DuplicateId,
-    /// no record for {0:?}
-    NoConversation(ChatId),
-    /// no record for {0:?}
-    NoRingerRecipient(RingerRecipientId),
-}
 
 /// Like [`TryFrom`] but with an extra context argument.
 ///
@@ -132,6 +132,21 @@ impl<A, B: TryFromWith<A, C>, C> TryIntoWith<B, C> for A {
     }
 }
 
+#[derive(Debug, displaydoc::Display, thiserror::Error)]
+pub enum StickerError {
+    /// pack ID is invalid
+    InvalidId,
+    /// multiple sticker packs for ID {0:?}
+    DuplicateId(StickerPackId),
+    /// for pack {0:?}: {1}
+    PackError(StickerPackId, StickerPackError),
+}
+
+trait WithId {
+    type Id;
+    fn id(&self) -> Self::Id;
+}
+
 /// recipient {0:?} error: {1}
 #[derive(Debug, displaydoc::Display, thiserror::Error)]
 pub struct RecipientFrameError(RecipientId, RecipientError);
@@ -163,6 +178,7 @@ impl<M: Method> PartialBackup<M> {
             recipients: Default::default(),
             chats: Default::default(),
             calls: Default::default(),
+            sticker_packs: HashMap::new(),
         }
     }
 
@@ -177,7 +193,9 @@ impl<M: Method> PartialBackup<M> {
             FrameItem::Chat(chat) => self.add_chat(chat).map_err(Into::into),
             FrameItem::ChatItem(chat_item) => self.add_chat_item(chat_item).map_err(Into::into),
             FrameItem::Call(call) => self.add_call(call).map_err(Into::into),
-            FrameItem::StickerPack(sticker_pack) => self.add_sticker_pack(sticker_pack),
+            FrameItem::StickerPack(sticker_pack) => {
+                self.add_sticker_pack(sticker_pack).map_err(Into::into)
+            }
         }
     }
 
@@ -204,13 +222,10 @@ impl<M: Method> PartialBackup<M> {
 
     fn add_chat(&mut self, chat: proto::Chat) -> Result<(), ChatFrameError> {
         let id = chat.id();
-        let recipient_id = chat.foreign_id();
 
-        if !self.recipients.contains(&recipient_id) {
-            return Err(ChatFrameError(id, ChatError::NoRecipient(recipient_id)));
-        }
-
-        let chat = chat.try_into().map_err(|e| ChatFrameError(id, e))?;
+        let chat = chat
+            .try_into_with(&self.recipients)
+            .map_err(|e| ChatFrameError(id, e))?;
         match self.chats.entry(id) {
             hash_map::Entry::Occupied(_) => Err(ChatFrameError(id, ChatError::DuplicateId)),
             hash_map::Entry::Vacant(v) => {
@@ -221,8 +236,7 @@ impl<M: Method> PartialBackup<M> {
     }
 
     fn add_chat_item(&mut self, chat_item: proto::ChatItem) -> Result<(), ChatFrameError> {
-        let chat_id = chat_item.foreign_id();
-        let author_id = chat_item.foreign_id();
+        let chat_id = ChatId(chat_item.chatId);
 
         let chat_data = match self.chats.entry(chat_id) {
             hash_map::Entry::Occupied(o) => o.into_mut(),
@@ -231,17 +245,11 @@ impl<M: Method> PartialBackup<M> {
             }
         };
 
-        if !self.recipients.contains(&author_id) {
-            return Err(ChatFrameError(
-                chat_id,
-                ChatItemError::AuthorNotFound(author_id).into(),
-            ));
-        }
-
         chat_data.items.extend([chat_item
-            .try_into_with(&ChatContext {
+            .try_into_with(&ConvertContext {
                 recipients: &self.recipients,
                 calls: &self.calls,
+                chats: &(),
             })
             .map_err(|e: ChatItemError| ChatFrameError(chat_id, e.into()))?]);
 
@@ -250,24 +258,14 @@ impl<M: Method> PartialBackup<M> {
 
     fn add_call(&mut self, call: proto::Call) -> Result<(), CallFrameError> {
         let call_id = call.id();
-        let conversation_recipient_id = call.foreign_id::<ChatId>();
-        let ringer_recipient_id = call.foreign_id::<Option<RingerRecipientId>>();
 
-        if !self.chats.contains(&conversation_recipient_id) {
-            return Err(CallFrameError(
-                call_id,
-                CallError::NoConversation(conversation_recipient_id),
-            ));
-        }
-
-        if let Some(ringer_recipient_id) = ringer_recipient_id {
-            if !self.recipients.contains(&ringer_recipient_id.into()) {
-                return Err(CallFrameError(
-                    call_id,
-                    CallError::NoRingerRecipient(ringer_recipient_id),
-                ));
-            }
-        }
+        let call = call
+            .try_into_with(&ConvertContext {
+                recipients: &self.recipients,
+                calls: &self.calls,
+                chats: &self.chats,
+            })
+            .map_err(|e| CallFrameError(call_id, e))?;
 
         self.calls
             .insert(call_id, call)
@@ -276,34 +274,132 @@ impl<M: Method> PartialBackup<M> {
         Ok(())
     }
 
-    fn add_sticker_pack(
-        &mut self,
-        _sticker_pack: proto::StickerPack,
-    ) -> Result<(), ValidationError> {
-        // TODO validate sticker pack proto.
-        Ok(())
+    fn add_sticker_pack(&mut self, sticker_pack: proto::StickerPack) -> Result<(), StickerError> {
+        let id = sticker_pack
+            .packId
+            .as_slice()
+            .try_into()
+            .map_err(|_| StickerError::InvalidId)?;
+        let pack =
+            StickerPack::try_from(sticker_pack).map_err(|e| StickerError::PackError(id, e))?;
+
+        match self.sticker_packs.entry(id) {
+            hash_map::Entry::Occupied(_) => Err(StickerError::DuplicateId(id)),
+            hash_map::Entry::Vacant(v) => {
+                v.insert(pack);
+                Ok(())
+            }
+        }
     }
 }
 
-/// Implementer of [`Contains`] for [`RecipientId`] and [`CallId`].
+/// Context for converting proto types via [`TryFromWith`].
 ///
 /// This is used as the concrete "context" type for the [`TryFromWith`]
 /// implementations below.
-pub(super) struct ChatContext<'a, Recipients, Calls> {
-    pub(super) recipients: &'a Recipients,
-    pub(super) calls: &'a Calls,
+pub(super) struct ConvertContext<'a, Recipients, Calls, Chats> {
+    recipients: &'a Recipients,
+    calls: &'a Calls,
+    chats: &'a Chats,
 }
 
-impl<R: Contains<RecipientId>, C> Contains<RecipientId> for ChatContext<'_, R, C> {
+impl<R: Contains<RecipientId>, C, Ch> Contains<RecipientId> for ConvertContext<'_, R, C, Ch> {
     fn contains(&self, key: &RecipientId) -> bool {
         self.recipients.contains(key)
     }
 }
 
-impl<R, C: Contains<CallId>> Contains<CallId> for ChatContext<'_, R, C> {
+impl<R, C: Contains<CallId>, Ch> Contains<CallId> for ConvertContext<'_, R, C, Ch> {
     fn contains(&self, key: &CallId) -> bool {
         self.calls.contains(key)
     }
+}
+
+impl<R, C, Ch: Contains<ChatId>> Contains<ChatId> for ConvertContext<'_, R, C, Ch> {
+    fn contains(&self, key: &ChatId) -> bool {
+        self.chats.contains(key)
+    }
+}
+
+impl<M: Method> Contains<(StickerPackId, StickerId)> for HashMap<StickerPackId, StickerPack<M>> {
+    fn contains(&self, (pack_id, sticker_id): &(StickerPackId, StickerId)) -> bool {
+        self.get(pack_id)
+            .is_some_and(|pack| pack.stickers.contains(sticker_id))
+    }
+}
+
+#[cfg(feature = "json")]
+#[derive(Debug, thiserror::Error, displaydoc::Display)]
+pub enum ConvertJsonError {
+    /// input array was empty
+    EmptyArray,
+    /// failed to parse JSON as proto: {0}
+    ProtoJsonParse(#[from] protobuf_json_mapping::ParseError),
+    /// failed to print proto as JSON: {0}
+    ProtoJsonPrint(#[from] protobuf_json_mapping::PrintError),
+    /// JSON error: {0}
+    Json(#[from] serde_json::Error),
+    /// failed to encode/decode binary protobuf: {0}
+    ProtoEncode(#[from] protobuf::Error),
+    /// input/output error: {0}
+    Io(#[from] std::io::Error),
+}
+
+#[cfg(feature = "json")]
+impl From<crate::parse::ParseError> for ConvertJsonError {
+    fn from(value: crate::parse::ParseError) -> Self {
+        match value {
+            crate::parse::ParseError::Decode(e) => e.into(),
+            crate::parse::ParseError::Io(e) => e.into(),
+        }
+    }
+}
+
+#[cfg(feature = "json")]
+pub fn convert_from_json(json: Vec<serde_json::Value>) -> Result<Box<[u8]>, ConvertJsonError> {
+    let mut it = json.into_iter();
+
+    let backup_info = protobuf_json_mapping::parse_from_str::<proto::BackupInfo>(
+        &it.next().ok_or(ConvertJsonError::EmptyArray)?.to_string(),
+    )?;
+
+    let mut serialized = Vec::new();
+    protobuf::Message::write_length_delimited_to_vec(&backup_info, &mut serialized)?;
+
+    for json_frame in it {
+        let frame = protobuf_json_mapping::parse_from_str::<proto::Frame>(&json_frame.to_string())?;
+
+        protobuf::Message::write_length_delimited_to_vec(&frame, &mut serialized)?;
+    }
+
+    Ok(serialized.into_boxed_slice())
+}
+
+#[cfg(feature = "json")]
+pub async fn convert_to_json(
+    length_delimited_binproto: impl futures::AsyncRead + Unpin,
+) -> Result<Vec<serde_json::Value>, ConvertJsonError> {
+    fn binary_proto_to_json<M: protobuf::MessageFull>(
+        binary: &[u8],
+    ) -> Result<serde_json::Value, ConvertJsonError> {
+        let proto = M::parse_from_bytes(binary)?;
+        let json_proto = protobuf_json_mapping::print_to_string(&proto)?;
+        Ok(serde_json::from_str(&json_proto)?)
+    }
+
+    let mut reader = crate::VarintDelimitedReader::new(length_delimited_binproto);
+
+    let mut array = Vec::new();
+    let backup_info = reader
+        .read_next()
+        .await?
+        .ok_or(ConvertJsonError::EmptyArray)?;
+    array.push(binary_proto_to_json::<proto::BackupInfo>(&backup_info)?);
+
+    while let Some(frame) = reader.read_next().await? {
+        array.push(binary_proto_to_json::<proto::Frame>(&frame)?);
+    }
+    Ok(array)
 }
 
 #[cfg(test)]
@@ -314,7 +410,7 @@ mod test {
     use super::*;
 
     impl proto::Chat {
-        const TEST_ID: u64 = 22222;
+        pub(super) const TEST_ID: u64 = 22222;
         fn test_data() -> Self {
             Self {
                 id: Self::TEST_ID,
@@ -324,47 +420,11 @@ mod test {
         }
     }
 
-    impl proto::Call {
-        pub(super) const TEST_ID: u64 = 33333;
-        pub(super) fn test_data() -> Self {
-            Self {
-                callId: Self::TEST_ID,
-                conversationRecipientId: proto::Chat::TEST_ID,
-                ringerRecipientId: Some(proto::Recipient::TEST_ID),
-                ..Default::default()
-            }
-        }
-        fn test_data_no_ringer() -> Self {
-            Self {
-                ringerRecipientId: None,
-                ..Self::test_data()
-            }
-        }
-        fn test_data_wrong_ringer() -> Self {
-            Self {
-                ringerRecipientId: Some(proto::Recipient::TEST_ID + 1),
-                ..Self::test_data()
-            }
-        }
-    }
-
     impl proto::ChatItem {
-        fn test_data() -> Self {
-            Self {
-                chatId: proto::Chat::TEST_ID,
-                authorId: proto::Recipient::TEST_ID,
-                item: Some(proto::chat_item::Item::StandardMessage(
-                    proto::StandardMessage::test_data(),
-                )),
-                ..Default::default()
-            }
-        }
-
         fn test_data_wrong_author() -> Self {
             Self {
-                chatId: proto::Chat::TEST_ID,
                 authorId: proto::Recipient::TEST_ID + 1,
-                ..Default::default()
+                ..Self::test_data()
             }
         }
     }
@@ -416,10 +476,6 @@ mod test {
         (ValidateOnly::fake(), Store::fake()),
         proto::ChatItem::test_data_wrong_author()
     )]
-    #[test_case(
-        ValidateOnly::fake_with([proto::Recipient::test_data().into(), proto::Chat::test_data().into()]),
-        proto::Call::test_data_wrong_ringer()
-    )]
     fn rejects_missing_foreign_key<M: Method>(
         mut partial: PartialBackup<M>,
         item: impl Into<FrameItem>,
@@ -443,18 +499,6 @@ mod test {
         assert_matches!(
             partial.add_frame_item(proto::AccountData::test_data().into()),
             Err(ValidationError::MultipleAccountData)
-        );
-    }
-
-    #[test]
-    fn allows_call_without_ringer_id() {
-        let mut partial = ValidateOnly::fake_with([
-            proto::Recipient::test_data().into(),
-            proto::Chat::test_data().into(),
-        ]);
-        assert_matches!(
-            partial.add_frame_item(proto::Call::test_data_no_ringer().into()),
-            Ok(())
         );
     }
 }

@@ -15,20 +15,12 @@ use clap::Parser;
 use nonzero_ext::nonzero;
 use rand_core::{CryptoRngCore, OsRng, RngCore};
 
-use attest::svr2::RaftConfig;
+use libsignal_net::auth::Auth;
 use libsignal_net::enclave::{EndpointConnection, Nitro, Sgx};
 use libsignal_net::env::Svr3Env;
-use libsignal_net::infra::certs::RootCertificates;
 use libsignal_net::infra::TcpSslTransportConnector;
-use libsignal_net::svr::{Auth, SvrConnection};
+use libsignal_net::svr::SvrConnection;
 use libsignal_net::svr3::{OpaqueMaskedShareSet, PpssOps};
-
-const NITRO_TEST_RAFT_CONFIG: RaftConfig = RaftConfig {
-    group_id: 2058019258222238426,
-    min_voting_replicas: 3,
-    max_voting_replicas: 5,
-    super_majority: 0,
-};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -57,32 +49,24 @@ async fn main() {
     let uid = {
         let mut bytes = [0u8; 16];
         rng.fill_bytes(&mut bytes[..]);
-        hex::encode(bytes)
+        bytes
     };
 
     let connect = || async {
         let connection_a =
             EndpointConnection::new(env.sgx(), Duration::from_secs(10), TcpSslTransportConnector);
-        let sgx_auth = Auth {
-            uid: uid.to_string(),
-            secret: sgx_secret,
-        };
-        let a = SvrConnection::<Sgx>::connect(sgx_auth, connection_a)
+        let sgx_auth = Auth::from_uid_and_secret(uid, sgx_secret);
+        let a = SvrConnection::<Sgx>::connect(sgx_auth, &connection_a)
             .await
             .expect("can attestedly connect to SGX");
 
-        let connection_b = EndpointConnection::with_custom_properties(
+        let connection_b = EndpointConnection::new(
             env.nitro(),
             Duration::from_secs(10),
             TcpSslTransportConnector,
-            RootCertificates::Signal,
-            Some(&NITRO_TEST_RAFT_CONFIG),
         );
-        let nitro_auth = Auth {
-            uid: uid.to_string(),
-            secret: nitro_secret,
-        };
-        let b = SvrConnection::<Nitro>::connect(nitro_auth, connection_b)
+        let nitro_auth = Auth::from_uid_and_secret(uid, nitro_secret);
+        let b = SvrConnection::<Nitro>::connect(nitro_auth, &connection_b)
             .await
             .expect("can attestedly connect to Nitro");
 
@@ -94,7 +78,7 @@ async fn main() {
 
     let share_set_bytes = {
         let opaque_share_set = Svr3Env::backup(
-            &mut connect().await,
+            connect().await,
             &args.password,
             secret,
             nonzero!(10u32),
@@ -109,14 +93,9 @@ async fn main() {
     let restored = {
         let opaque_share_set =
             OpaqueMaskedShareSet::deserialize(&share_set_bytes).expect("can deserialize");
-        Svr3Env::restore(
-            &mut connect().await,
-            &args.password,
-            opaque_share_set,
-            &mut rng,
-        )
-        .await
-        .expect("can mutli restore")
+        Svr3Env::restore(connect().await, &args.password, opaque_share_set, &mut rng)
+            .await
+            .expect("can mutli restore")
     };
     println!("Restored secret: {}", hex::encode(restored));
 
@@ -140,4 +119,3 @@ fn parse_auth_secret(b64: &str) -> [u8; 32] {
 fn init_logger() {
     let _ = env_logger::builder().is_test(true).try_init();
 }
-//

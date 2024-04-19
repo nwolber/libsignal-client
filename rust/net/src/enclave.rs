@@ -11,8 +11,7 @@ use attest::{cds2, enclave, nitro};
 use derive_where::derive_where;
 use http::uri::PathAndQuery;
 
-use crate::env::{Svr3Env, WS_KEEP_ALIVE_INTERVAL, WS_MAX_IDLE_TIME};
-use crate::infra::certs::RootCertificates;
+use crate::env::{DomainConfig, Svr3Env, WS_KEEP_ALIVE_INTERVAL, WS_MAX_IDLE_TIME};
 use crate::infra::connection_manager::{
     MultiRouteConnectionManager, SingleRouteThrottlingConnectionManager,
 };
@@ -57,47 +56,45 @@ impl Svr3Flavor for Sgx {}
 
 impl Svr3Flavor for Nitro {}
 
-pub trait HasConnections {
-    type Connections<'a>: ArrayIsh<&'a mut AttestedConnection>
-    where
-        Self: 'a;
-    fn get_connections(&mut self) -> Self::Connections<'_>;
+pub trait IntoConnections {
+    type Connections: ArrayIsh<AttestedConnection> + Send;
+    fn into_connections(self) -> Self::Connections;
 }
 
-impl<A> HasConnections for A
+impl<A> IntoConnections for A
 where
-    A: AsMut<AttestedConnection>,
+    A: Into<AttestedConnection>,
 {
-    type Connections<'a> = [&'a mut AttestedConnection; 1] where Self: 'a;
-    fn get_connections(&mut self) -> Self::Connections<'_> {
-        [self.as_mut()]
+    type Connections = [AttestedConnection; 1];
+    fn into_connections(self) -> Self::Connections {
+        [self.into()]
     }
 }
 
-impl<A, B> HasConnections for (A, B)
+impl<A, B> IntoConnections for (A, B)
 where
-    A: AsMut<AttestedConnection>,
-    B: AsMut<AttestedConnection>,
+    A: Into<AttestedConnection>,
+    B: Into<AttestedConnection>,
 {
-    type Connections<'a> = [&'a mut AttestedConnection; 2] where Self: 'a;
-    fn get_connections(&mut self) -> Self::Connections<'_> {
-        [self.0.as_mut(), self.1.as_mut()]
+    type Connections = [AttestedConnection; 2];
+    fn into_connections(self) -> Self::Connections {
+        [self.0.into(), self.1.into()]
     }
 }
 
-impl<A, B, C> HasConnections for (A, B, C)
+impl<A, B, C> IntoConnections for (A, B, C)
 where
-    A: AsMut<AttestedConnection>,
-    B: AsMut<AttestedConnection>,
-    C: AsMut<AttestedConnection>,
+    A: Into<AttestedConnection>,
+    B: Into<AttestedConnection>,
+    C: Into<AttestedConnection>,
 {
-    type Connections<'a> =[&'a mut AttestedConnection; 3] where Self: 'a;
-    fn get_connections(&mut self) -> Self::Connections<'_> {
-        [self.0.as_mut(), self.1.as_mut(), self.2.as_mut()]
+    type Connections = [AttestedConnection; 3];
+    fn into_connections(self) -> Self::Connections {
+        [self.0.into(), self.1.into(), self.2.into()]
     }
 }
 
-pub trait ArrayIsh<T>: AsMut<[T]> {
+pub trait ArrayIsh<T>: AsRef<[T]> + AsMut<[T]> {
     const N: usize;
 }
 
@@ -106,8 +103,8 @@ impl<T, const N: usize> ArrayIsh<T> for [T; N] {
 }
 
 pub trait PpssSetup {
-    type Connections: HasConnections;
-    type ServerIds: ArrayIsh<u64>;
+    type Connections: IntoConnections + Send;
+    type ServerIds: ArrayIsh<u64> + Send;
     const N: usize = Self::ServerIds::N;
     fn server_ids() -> Self::ServerIds;
 }
@@ -144,14 +141,8 @@ impl<Bytes: AsRef<[u8]>, S> AsRef<[u8]> for MrEnclave<Bytes, S> {
 
 #[derive_where(Copy, Clone)]
 pub struct EnclaveEndpoint<'a, E: EnclaveKind> {
-    pub host: &'a str,
+    pub domain_config: DomainConfig,
     pub mr_enclave: MrEnclave<&'a [u8], E>,
-}
-
-impl<S: EnclaveKind> EnclaveEndpoint<'_, S> {
-    pub fn direct_connection(&self) -> ConnectionParams {
-        ConnectionParams::direct_to_host(self.host)
-    }
 }
 
 pub trait NewHandshake {
@@ -196,25 +187,18 @@ impl<E: EnclaveKind, T: TransportConnector>
         connect_timeout: Duration,
         transport_connector: T,
     ) -> Self {
-        Self::with_custom_properties(
-            endpoint,
-            connect_timeout,
-            transport_connector,
-            RootCertificates::Signal,
-            None,
-        )
+        Self::with_custom_properties(endpoint, connect_timeout, transport_connector, None)
     }
 
     pub fn with_custom_properties(
         endpoint: EnclaveEndpoint<'static, E>,
         connect_timeout: Duration,
         transport_connector: T,
-        certs: RootCertificates,
         raft_config_override: Option<&'static RaftConfig>,
     ) -> Self {
         Self {
             manager: SingleRouteThrottlingConnectionManager::new(
-                endpoint.direct_connection().with_certs(certs),
+                endpoint.domain_config.connection_params(),
                 connect_timeout,
             ),
             connector: WebSocketClientConnector::new(

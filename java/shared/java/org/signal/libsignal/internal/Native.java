@@ -66,6 +66,7 @@ public final class Native {
   static {
     loadLibrary();
     Logger_Initialize(SignalProtocolLogger.INFO, Log.class);
+    preloadClasses();
   }
 
   private Native() {}
@@ -159,7 +160,7 @@ public final class Native {
   public static native Map Cds2Metrics_extract(byte[] attestationMsg);
 
   public static native void CdsiLookup_Destroy(long handle);
-  public static native CompletableFuture<Map> CdsiLookup_complete(long asyncRuntime, long lookup);
+  public static native CompletableFuture<Object> CdsiLookup_complete(long asyncRuntime, long lookup);
   public static native CompletableFuture<Long> CdsiLookup_new(long asyncRuntime, long connectionManager, String username, String password, long request, int timeoutMillis);
   public static native byte[] CdsiLookup_token(long lookup);
 
@@ -324,6 +325,11 @@ public final class Native {
   public static native long LookupRequest_new();
   public static native void LookupRequest_setReturnAcisWithoutUaks(long request, boolean returnAcisWithoutUaks);
   public static native void LookupRequest_setToken(long request, byte[] token);
+
+  public static native void MessageBackupKey_Destroy(long handle);
+  public static native long MessageBackupKey_New(byte[] masterKey, byte[] aci);
+
+  public static native Object MessageBackupValidator_Validate(long key, InputStream firstStream, InputStream secondStream, long len);
 
   public static native long Mp4Sanitizer_Sanitize(InputStream input, long len);
 
@@ -572,7 +578,8 @@ public final class Native {
 
   public static native long Svr2Client_New(byte[] mrenclave, byte[] attestationMsg, long currentTimestamp);
 
-  public static native Map TESTING_CdsiLookupResponseConvert();
+  public static native void TESTING_CdsiLookupErrorConvert();
+  public static native CompletableFuture<Object> TESTING_CdsiLookupResponseConvert(long asyncRuntime);
   public static native void TESTING_ErrorOnBorrowAsync(Object input);
   public static native CompletableFuture TESTING_ErrorOnBorrowIo(long asyncRuntime, Object input);
   public static native void TESTING_ErrorOnBorrowSync(Object input);
@@ -583,6 +590,7 @@ public final class Native {
   public static native CompletableFuture<Long> TESTING_FutureProducesOtherPointerType(long asyncRuntime, String input);
   public static native CompletableFuture<Long> TESTING_FutureProducesPointerType(long asyncRuntime, int input);
   public static native CompletableFuture<Integer> TESTING_FutureSuccess(long asyncRuntime, int input);
+  public static native CompletableFuture TESTING_FutureThrowsCustomErrorType(long asyncRuntime);
   public static native void TESTING_NonSuspendingBackgroundThreadRuntime_Destroy(long handle);
   public static native String TESTING_OtherTestingHandleType_getValue(long handle);
   public static native void TESTING_PanicInBodyAsync(Object input);
@@ -597,6 +605,7 @@ public final class Native {
   public static native Object TESTING_PanicOnReturnAsync(Object needsCleanup);
   public static native CompletableFuture<Object> TESTING_PanicOnReturnIo(long asyncRuntime, Object needsCleanup);
   public static native Object TESTING_PanicOnReturnSync(Object needsCleanup);
+  public static native Object[] TESTING_ReturnStringArray();
   public static native int TESTING_TestingHandleType_getValue(long handle);
 
   public static native void TestingHandleType_Destroy(long handle);
@@ -617,7 +626,7 @@ public final class Native {
   public static native byte[] UsernameLink_Create(String username, byte[] entropy);
   public static native String UsernameLink_DecryptUsername(byte[] entropy, byte[] encryptedUsername);
 
-  public static native String Username_CandidatesFrom(String nickname, int minLen, int maxLen);
+  public static native Object[] Username_CandidatesFrom(String nickname, int minLen, int maxLen);
   public static native byte[] Username_Hash(String username);
   public static native byte[] Username_HashFromParts(String nickname, String discriminator, int minLen, int maxLen);
   public static native byte[] Username_Proof(String username, byte[] randomness);
@@ -631,4 +640,6 @@ public final class Native {
   public static native int ValidatingMac_Update(long mac, byte[] bytes, int offset, int length);
 
   public static native void WebpSanitizer_Sanitize(InputStream input);
+
+  public static native void preloadClasses();
 }

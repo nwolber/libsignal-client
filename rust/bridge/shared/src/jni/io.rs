@@ -16,18 +16,20 @@ use crate::io::{InputStream, InputStreamRead, SyncInputStream};
 pub type JavaInputStream<'a> = JObject<'a>;
 pub type JavaSyncInputStream<'a> = JObject<'a>;
 
+/// Implementation of [`InputStream`] for an argument to a bridge function.
 pub struct JniInputStream<'a> {
     env: RefCell<EnvHandle<'a>>,
     stream: &'a JObject<'a>,
 }
 
+/// Implementation of [`SyncInputStream`].
 pub type JniSyncInputStream<'a> = JniInputStream<'a>;
 
 impl<'a> JniInputStream<'a> {
     pub fn new<'context: 'a>(
         env: &mut JNIEnv<'context>,
         stream: &'a JObject<'a>,
-    ) -> SignalJniResult<Self> {
+    ) -> Result<Self, BridgeLayerError> {
         check_jobject_type(env, stream, jni_class_name!(java.io.InputStream))?;
         Ok(Self {
             env: EnvHandle::new(env).into(),

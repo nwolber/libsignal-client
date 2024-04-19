@@ -11,7 +11,10 @@ type Uuid = Buffer;
 /// what's important is that it's an integer less than Number.MAX_SAFE_INTEGER.
 type Timestamp = number;
 
-type LookupResponse = Map<string, LookupResponseEntry>;
+interface LookupResponse {
+  entries: Map<string, LookupResponseEntry>;
+  debugPermitsUsed: number;
+}
 
 interface LookupResponseEntry {
   readonly aci: string | undefined;
@@ -94,6 +97,11 @@ export abstract class SyncInputStream extends Buffer {}
 
 interface Wrapper<T> {
   readonly _nativeHandle: T;
+}
+
+interface MessageBackupValidationOutcome {
+  errorMessage: string | null;
+  unknownFieldMessages: Array<string>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

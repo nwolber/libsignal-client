@@ -764,6 +764,30 @@ impl<'a> ResultTypeInfo<'a> for Vec<u8> {
     }
 }
 
+impl<'a> ResultTypeInfo<'a> for Box<[String]> {
+    type ResultType = JsArray;
+    fn convert_into(self, cx: &mut impl Context<'a>) -> JsResult<'a, Self::ResultType> {
+        make_string_array(cx, &*self)
+    }
+}
+
+fn make_string_array<'a, It: IntoIterator>(
+    cx: &mut impl Context<'a>,
+    it: It,
+) -> JsResult<'a, JsArray>
+where
+    It::IntoIter: ExactSizeIterator,
+    It::Item: AsRef<str>,
+{
+    let it = it.into_iter();
+    let array = JsArray::new(cx, it.len().try_into().expect("< u32::MAX"));
+    for (unknown, i) in it.zip(0..) {
+        let message = JsString::new(cx, unknown.as_ref());
+        array.set(cx, i, message)?;
+    }
+    Ok(array)
+}
+
 /// Loads from a JsBuffer, assuming it won't be mutated while in use.
 /// See [`AssumedImmutableBuffer`].
 impl<'storage, 'context: 'storage, const LEN: usize> ArgTypeInfo<'storage, 'context>
@@ -811,6 +835,26 @@ impl<'a> ResultTypeInfo<'a> for () {
     }
 }
 
+impl<'a> ResultTypeInfo<'a> for crate::message_backup::MessageBackupValidationOutcome {
+    type ResultType = JsObject;
+
+    fn convert_into(self, cx: &mut impl Context<'a>) -> JsResult<'a, Self::ResultType> {
+        let Self {
+            error_message,
+            found_unknown_fields,
+        } = self;
+        let error_message = error_message.convert_into(cx)?;
+        let unknown_field_messages =
+            make_string_array(cx, found_unknown_fields.into_iter().map(|s| s.to_string()))?;
+
+        let obj = JsObject::new(cx);
+        obj.set(cx, "errorMessage", error_message)?;
+        obj.set(cx, "unknownFieldMessages", unknown_field_messages)?;
+
+        Ok(obj)
+    }
+}
+
 impl<'a, T: Value> ResultTypeInfo<'a> for Handle<'a, T> {
     type ResultType = T;
     fn convert_into(self, _cx: &mut impl Context<'a>) -> NeonResult<Handle<'a, Self::ResultType>> {
@@ -851,13 +895,18 @@ impl<'a> ResultTypeInfo<'a> for libsignal_net::cdsi::LookupResponse {
             Ok((e164, value))
         }
 
+        let Self {
+            records,
+            debug_permits_used,
+        } = self;
+
         let map_constructor: Handle<'_, JsFunction> =
             cx.global().get(cx, "Map").expect("Map constructor exists");
-        let num_elements = self.records.len().try_into().expect("< u32::MAX");
+        let num_elements = records.len().try_into().expect("< u32::MAX");
 
         // Construct a JS Map by calling its constructor with an array of [K, V] arrays.
         let entries = JsArray::new(cx, num_elements);
-        for (record, i) in self.records.into_iter().zip(0..) {
+        for (record, i) in records.into_iter().zip(0..) {
             let (key, value) = to_key_value(cx, record)?;
             let entry = JsArray::new(cx, 2);
             entry.set(cx, 0, key)?;
@@ -866,7 +915,13 @@ impl<'a> ResultTypeInfo<'a> for libsignal_net::cdsi::LookupResponse {
         }
 
         let iterable = entries.as_value(cx);
-        map_constructor.construct(cx, [iterable])
+        let map = map_constructor.construct(cx, [iterable])?;
+        let debug_permits_used = JsNumber::new(cx, debug_permits_used);
+
+        let output = JsObject::new(cx);
+        output.set(cx, "entries", map)?;
+        output.set(cx, "debugPermitsUsed", debug_permits_used)?;
+        Ok(output)
     }
 }
 

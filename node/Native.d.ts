@@ -11,7 +11,10 @@ type Uuid = Buffer;
 /// what's important is that it's an integer less than Number.MAX_SAFE_INTEGER.
 type Timestamp = number;
 
-type LookupResponse = Map<string, LookupResponseEntry>;
+interface LookupResponse {
+  entries: Map<string, LookupResponseEntry>;
+  debugPermitsUsed: number;
+}
 
 interface LookupResponseEntry {
   readonly aci: string | undefined;
@@ -94,6 +97,11 @@ export abstract class SyncInputStream extends Buffer {}
 
 interface Wrapper<T> {
   readonly _nativeHandle: T;
+}
+
+interface MessageBackupValidationOutcome {
+  errorMessage: string | null;
+  unknownFieldMessages: Array<string>;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -236,6 +244,9 @@ export function LookupRequest_addPreviousE164(request: Wrapper<LookupRequest>, e
 export function LookupRequest_new(): LookupRequest;
 export function LookupRequest_setReturnAcisWithoutUaks(request: Wrapper<LookupRequest>, returnAcisWithoutUaks: boolean): void;
 export function LookupRequest_setToken(request: Wrapper<LookupRequest>, token: Buffer): void;
+export function MessageBackupKey_New(masterKey: Buffer, aci: Buffer): MessageBackupKey;
+export function MessageBackupValidator_Validate(key: Wrapper<MessageBackupKey>, firstStream: InputStream, secondStream: InputStream, len: Buffer): Promise<MessageBackupValidationOutcome>;
+export function MinidumpToJSONString(buffer: Buffer): string;
 export function Mp4Sanitizer_Sanitize(input: InputStream, len: Buffer): Promise<SanitizedMetadata>;
 export function PlaintextContent_Deserialize(data: Buffer): PlaintextContent;
 export function PlaintextContent_FromDecryptionErrorMessage(m: Wrapper<DecryptionErrorMessage>): PlaintextContent;
@@ -417,7 +428,8 @@ export function SignedPreKeyRecord_GetSignature(obj: Wrapper<SignedPreKeyRecord>
 export function SignedPreKeyRecord_GetTimestamp(obj: Wrapper<SignedPreKeyRecord>): Timestamp;
 export function SignedPreKeyRecord_New(id: number, timestamp: Timestamp, pubKey: Wrapper<PublicKey>, privKey: Wrapper<PrivateKey>, signature: Buffer): SignedPreKeyRecord;
 export function SignedPreKeyRecord_Serialize(obj: Wrapper<SignedPreKeyRecord>): Buffer;
-export function TESTING_CdsiLookupResponseConvert(): LookupResponse;
+export function TESTING_CdsiLookupErrorConvert(): void;
+export function TESTING_CdsiLookupResponseConvert(asyncRuntime: Wrapper<TokioAsyncContext>): Promise<LookupResponse>;
 export function TESTING_ErrorOnBorrowAsync(_input: null): Promise<void>;
 export function TESTING_ErrorOnBorrowIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _input: null): Promise<void>;
 export function TESTING_ErrorOnBorrowSync(_input: null): void;
@@ -442,6 +454,7 @@ export function TESTING_PanicOnLoadSync(_needsCleanup: null, _input: null): void
 export function TESTING_PanicOnReturnAsync(_needsCleanup: null): Promise<null>;
 export function TESTING_PanicOnReturnIo(asyncRuntime: Wrapper<NonSuspendingBackgroundThreadRuntime>, _needsCleanup: null): Promise<null>;
 export function TESTING_PanicOnReturnSync(_needsCleanup: null): null;
+export function TESTING_ReturnStringArray(): string[];
 export function TESTING_TestingHandleType_getValue(handle: Wrapper<TestingHandleType>): number;
 export function TokioAsyncContext_new(): TokioAsyncContext;
 export function UnidentifiedSenderMessageContent_Deserialize(data: Buffer): UnidentifiedSenderMessageContent;
@@ -454,7 +467,7 @@ export function UnidentifiedSenderMessageContent_New(message: Wrapper<Ciphertext
 export function UnidentifiedSenderMessageContent_Serialize(obj: Wrapper<UnidentifiedSenderMessageContent>): Buffer;
 export function UsernameLink_Create(username: string, entropy: Buffer | null): Buffer;
 export function UsernameLink_DecryptUsername(entropy: Buffer, encryptedUsername: Buffer): string;
-export function Username_CandidatesFrom(nickname: string, minLen: number, maxLen: number): string;
+export function Username_CandidatesFrom(nickname: string, minLen: number, maxLen: number): string[];
 export function Username_Hash(username: string): Buffer;
 export function Username_HashFromParts(nickname: string, discriminator: string, minLen: number, maxLen: number): Buffer;
 export function Username_Proof(username: string, randomness: Buffer): Buffer;
@@ -487,6 +500,7 @@ interface KyberPreKeyRecord { readonly __type: unique symbol; }
 interface KyberPublicKey { readonly __type: unique symbol; }
 interface KyberSecretKey { readonly __type: unique symbol; }
 interface LookupRequest { readonly __type: unique symbol; }
+interface MessageBackupKey { readonly __type: unique symbol; }
 interface NonSuspendingBackgroundThreadRuntime { readonly __type: unique symbol; }
 interface OtherTestingHandleType { readonly __type: unique symbol; }
 interface PlaintextContent { readonly __type: unique symbol; }

@@ -18,20 +18,30 @@ use nonzero_ext::nonzero;
 use rand_core::{CryptoRngCore, OsRng, RngCore};
 
 use attest::svr2::RaftConfig;
+use libsignal_net::auth::Auth;
 use libsignal_net::enclave::{
     EnclaveEndpoint, EndpointConnection, MrEnclave, PpssSetup, Sgx, Svr3Flavor,
 };
+use libsignal_net::env::DomainConfig;
 use libsignal_net::infra::certs::RootCertificates;
 use libsignal_net::infra::TcpSslTransportConnector;
-use libsignal_net::svr::{Auth, SvrConnection};
+use libsignal_net::svr::SvrConnection;
 use libsignal_net::svr3::{OpaqueMaskedShareSet, PpssOps};
 
-const TEST_SERVER_CERT_DER: &[u8] = include_bytes!("../res/sgx_test_server_cert.cer");
+const TEST_SERVER_CERT: RootCertificates =
+    RootCertificates::FromDer(include_bytes!("../res/sgx_test_server_cert.cer"));
 const TEST_SERVER_RAFT_CONFIG: RaftConfig = RaftConfig {
     min_voting_replicas: 1,
     max_voting_replicas: 3,
     super_majority: 0,
     group_id: 5873791967879921865,
+};
+const TEST_SERVER_DOMAIN_CONFIG: DomainConfig = DomainConfig {
+    hostname: "backend1.svr3.test.signal.org",
+    ip_v4: &[],
+    ip_v6: &[],
+    cert: &TEST_SERVER_CERT,
+    proxy_path: "/svr3-test",
 };
 
 pub struct TwoForTwoEnv<'a, A, B>(EnclaveEndpoint<'a, A>, EnclaveEndpoint<'a, B>)
@@ -41,8 +51,8 @@ where
 
 impl<'a, A, B> PpssSetup for TwoForTwoEnv<'a, A, B>
 where
-    A: Svr3Flavor,
-    B: Svr3Flavor,
+    A: Svr3Flavor + Send,
+    B: Svr3Flavor + Send,
 {
     type Connections = (SvrConnection<A>, SvrConnection<B>);
     type ServerIds = [u64; 2];
@@ -78,17 +88,14 @@ async fn main() {
     let mut make_uid = || {
         let mut bytes = [0u8; 16];
         rng.fill_bytes(&mut bytes[..]);
-        hex::encode(bytes)
+        bytes
     };
 
-    let make_auth = |uid: &str| Auth {
-        uid: uid.to_string(),
-        secret: auth_secret,
-    };
+    let make_auth = |uid: [u8; 16]| Auth::from_uid_and_secret(uid, auth_secret);
 
     let two_sgx_env = {
         let endpoint = EnclaveEndpoint::<Sgx> {
-            host: "backend1.svr3.test.signal.org",
+            domain_config: TEST_SERVER_DOMAIN_CONFIG,
             mr_enclave: MrEnclave::new(&hex!(
                 "acb1973aa0bbbd14b3b4e06f145497d948fd4a98efc500fcce363b3b743ec482"
             )),
@@ -103,11 +110,10 @@ async fn main() {
             two_sgx_env.0,
             Duration::from_secs(10),
             TcpSslTransportConnector,
-            RootCertificates::FromDer(TEST_SERVER_CERT_DER.to_vec()),
             Some(&TEST_SERVER_RAFT_CONFIG),
         );
 
-        let a = SvrConnection::connect(make_auth(&uid_a), connection_a)
+        let a = SvrConnection::connect(make_auth(uid_a), &connection_a)
             .await
             .expect("can attestedly connect");
 
@@ -115,11 +121,10 @@ async fn main() {
             two_sgx_env.1,
             Duration::from_secs(10),
             TcpSslTransportConnector,
-            RootCertificates::FromDer(TEST_SERVER_CERT_DER.to_vec()),
             Some(&TEST_SERVER_RAFT_CONFIG),
         );
 
-        let b = SvrConnection::connect(make_auth(&uid_b), connection_b)
+        let b = SvrConnection::connect(make_auth(uid_b), &connection_b)
             .await
             .expect("can attestedly connect");
         (a, b)
@@ -130,7 +135,7 @@ async fn main() {
 
     let share_set_bytes = {
         let opaque_share_set = TwoForTwoEnv::backup(
-            &mut connect().await,
+            connect().await,
             &args.password,
             secret,
             nonzero!(10u32),
@@ -145,14 +150,9 @@ async fn main() {
     let restored = {
         let opaque_share_set =
             OpaqueMaskedShareSet::deserialize(&share_set_bytes).expect("can deserialize");
-        TwoForTwoEnv::restore(
-            &mut connect().await,
-            &args.password,
-            opaque_share_set,
-            &mut rng,
-        )
-        .await
-        .expect("can multi restore")
+        TwoForTwoEnv::restore(connect().await, &args.password, opaque_share_set, &mut rng)
+            .await
+            .expect("can multi restore")
     };
     println!("Restored secret: {}", hex::encode(restored));
 

@@ -2,13 +2,13 @@
 // Copyright 2021 Signal Messenger, LLC.
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-
-use super::*;
+use std::fmt;
 
 use paste::paste;
 use signal_media::sanitize::mp4::{Error as Mp4Error, ParseError as Mp4ParseError};
 use signal_media::sanitize::webp::{Error as WebpError, ParseError as WebpParseError};
-use std::fmt;
+
+use super::*;
 
 const ERRORS_PROPERTY_NAME: &str = "Errors";
 const ERROR_CLASS_NAME: &str = "LibSignalErrorBase";
@@ -65,6 +65,56 @@ fn new_js_error<'a>(
         }
     }
 }
+
+/// [`std::error::Error`] implementer that wraps a thrown value.
+#[derive(Debug)]
+pub(crate) enum ThrownException {
+    Error(Root<JsError>),
+    String(String),
+}
+
+impl ThrownException {
+    pub(crate) fn from_value<'a>(
+        cx: &mut CallContext<'a, JsObject>,
+        error: Handle<'a, JsValue>,
+    ) -> Self {
+        if let Ok(e) = error.downcast::<JsError, _>(cx) {
+            ThrownException::Error(e.root(cx))
+        } else if let Ok(e) = error.downcast::<JsString, _>(cx) {
+            ThrownException::String(e.value(cx))
+        } else {
+            ThrownException::String(
+                error
+                    .to_string(cx)
+                    .expect("can convert to string")
+                    .value(cx),
+            )
+        }
+    }
+}
+
+impl Default for ThrownException {
+    fn default() -> Self {
+        Self::String(String::default())
+    }
+}
+
+impl From<&str> for ThrownException {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl std::fmt::Display for ThrownException {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Error(r) => write!(f, "{:?}", r),
+            Self::String(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl std::error::Error for ThrownException {}
 
 pub trait SignalNodeError: Sized + fmt::Display {
     fn throw<'a>(
@@ -319,7 +369,33 @@ impl SignalNodeError for WebpError {
     }
 }
 
-impl SignalNodeError for libsignal_net::cdsi::Error {
+impl SignalNodeError for std::io::Error {
+    fn throw<'a>(
+        mut self,
+        cx: &mut impl Context<'a>,
+        _module: Handle<'a, JsObject>,
+        _operation_name: &str,
+    ) -> JsResult<'a, JsValue> {
+        let exception = (self.kind() == std::io::ErrorKind::Other)
+            .then(|| {
+                self.get_mut()
+                    .and_then(|e| e.downcast_mut::<ThrownException>())
+            })
+            .flatten()
+            .map(std::mem::take);
+
+        match exception {
+            Some(ThrownException::Error(e)) => {
+                let inner = e.into_inner(cx);
+                cx.throw(inner)
+            }
+            Some(ThrownException::String(s)) => cx.throw_error(s),
+            None => cx.throw_error(self.to_string()),
+        }
+    }
+}
+
+impl SignalNodeError for libsignal_net::cdsi::LookupError {
     fn throw<'a>(
         self,
         cx: &mut impl Context<'a>,
@@ -338,7 +414,7 @@ impl SignalNodeError for libsignal_net::cdsi::Error {
             ),
             Self::Net(_)
             | Self::Protocol
-            | Self::AttestationError
+            | Self::AttestationError(_)
             | Self::InvalidResponse
             | Self::ParseError => (IO_ERROR, None),
         };

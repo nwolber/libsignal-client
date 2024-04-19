@@ -5,20 +5,26 @@
 
 //! Signal remote message backup utilities.
 //!
-use futures::{AsyncRead, AsyncSeek};
+use futures::AsyncRead;
+use mediasan_common::AsyncSkip;
 use protobuf::Message as _;
 
+use crate::frame::ReaderFactory;
 use crate::key::MessageBackupKey;
 use crate::parse::VarintDelimitedReader;
-use crate::unknown::{PathPart, UnknownValue, VisitUnknownFieldsExt as _};
+use crate::unknown::{FormatPath, PathPart, UnknownValue, VisitUnknownFieldsExt as _};
 
 pub mod args;
 pub mod backup;
 pub mod frame;
 pub mod key;
 pub mod parse;
-pub(crate) mod proto;
 pub mod unknown;
+
+#[cfg(not(feature = "expose-proto-types"))]
+pub(crate) mod proto;
+#[cfg(feature = "expose-proto-types")]
+pub mod proto;
 
 pub struct BackupReader<R> {
     reader: VarintDelimitedReader<R>,
@@ -48,6 +54,22 @@ pub struct FoundUnknownField {
     pub frame_index: usize,
     pub path: Vec<PathPart>,
     pub value: UnknownValue,
+}
+
+impl std::fmt::Display for FoundUnknownField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            frame_index,
+            path,
+            value,
+        } = self;
+        write!(
+            f,
+            "in frame {frame_index}, {} has unknown {}",
+            FormatPath(path.as_slice()),
+            value
+        )
+    }
 }
 
 impl<R> ReadResult<R> {
@@ -96,12 +118,12 @@ impl<R: AsyncRead + Unpin> BackupReader<R> {
     }
 }
 
-impl<R: AsyncRead + AsyncSeek + Unpin> BackupReader<frame::FramesReader<R>> {
+impl<R: AsyncRead + AsyncSkip + Unpin> BackupReader<frame::FramesReader<R>> {
     pub async fn new_encrypted_compressed(
         key: &MessageBackupKey,
-        reader: R,
+        factory: impl ReaderFactory<Reader = R>,
     ) -> Result<Self, frame::ValidationError> {
-        let reader = frame::FramesReader::new(key, reader).await?;
+        let reader = frame::FramesReader::new(key, factory).await?;
         Ok(Self::new_unencrypted(reader))
     }
 }

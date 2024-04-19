@@ -19,6 +19,25 @@ macro_rules! impl_from_oneof {
 
 use self::backup::*;
 
+#[cfg(feature = "expose-proto-types")]
+pub use self::backup::*;
+
+impl_from_oneof!(
+    chat_item::DirectionalDetails,
+    chat_item::IncomingMessageDetails,
+    Incoming
+);
+impl_from_oneof!(
+    chat_item::DirectionalDetails,
+    chat_item::OutgoingMessageDetails,
+    Outgoing
+);
+impl_from_oneof!(
+    chat_item::DirectionalDetails,
+    chat_item::DirectionlessMessageDetails,
+    Directionless
+);
+
 impl_from_oneof!(frame::Item, AccountData, Account);
 impl_from_oneof!(frame::Item, Recipient, Recipient);
 impl_from_oneof!(frame::Item, Chat, Chat);
@@ -31,11 +50,6 @@ impl_from_oneof!(recipient::Destination, Contact, Contact);
 impl_from_oneof!(recipient::Destination, DistributionList, DistributionList);
 
 impl_from_oneof!(chat_update_message::Update, SimpleChatUpdate, SimpleUpdate);
-impl_from_oneof!(
-    chat_update_message::Update,
-    GroupDescriptionChatUpdate,
-    GroupDescription
-);
 impl_from_oneof!(
     chat_update_message::Update,
     ExpirationTimerChatUpdate,

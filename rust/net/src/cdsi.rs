@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-use std::borrow::Cow;
 use std::default::Default;
 use std::fmt::Display;
 use std::num::{NonZeroU64, ParseIntError};
@@ -28,21 +27,6 @@ use crate::infra::ws::{
 };
 use crate::infra::{AsyncDuplexStream, TransportConnector};
 use crate::proto::cds2::{ClientRequest, ClientResponse};
-
-pub struct Auth {
-    pub username: String,
-    pub password: String,
-}
-
-impl HttpBasicAuth for Auth {
-    fn username(&self) -> &str {
-        &self.username
-    }
-
-    fn password(&self) -> std::borrow::Cow<str> {
-        Cow::Borrowed(&self.password)
-    }
-}
 
 trait FixedLengthSerializable {
     const SERIALIZED_LEN: usize;
@@ -162,6 +146,7 @@ pub struct Token(pub Box<[u8]>);
 #[cfg_attr(test, derive(PartialEq))]
 pub struct LookupResponse {
     pub records: Vec<LookupResponseEntry>,
+    pub debug_permits_used: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -177,7 +162,7 @@ pub enum LookupResponseParseError {
     InvalidNumberOfBytes { actual_length: usize },
 }
 
-impl From<LookupResponseParseError> for Error {
+impl From<LookupResponseParseError> for LookupError {
     fn from(value: LookupResponseParseError) -> Self {
         match value {
             LookupResponseParseError::InvalidNumberOfBytes { .. } => Self::ParseError,
@@ -192,7 +177,7 @@ impl TryFrom<ClientResponse> for LookupResponse {
         let ClientResponse {
             e164_pni_aci_triples,
             token: _,
-            debug_permits_used: _,
+            debug_permits_used,
         } = response;
 
         if e164_pni_aci_triples.len() % LookupResponseEntry::SERIALIZED_LEN != 0 {
@@ -210,7 +195,10 @@ impl TryFrom<ClientResponse> for LookupResponse {
             })
             .collect();
 
-        Ok(Self { records })
+        Ok(Self {
+            records,
+            debug_permits_used,
+        })
     }
 }
 
@@ -246,14 +234,15 @@ impl<S> AsMut<AttestedConnection<S>> for CdsiConnection<S> {
     }
 }
 
+/// Anything that can go wrong during a CDSI lookup.
 #[derive(Debug, Error, displaydoc::Display)]
-pub enum Error {
+pub enum LookupError {
     /// Network error
     Net(#[from] NetError),
     /// Protocol error after establishing a connection.
     Protocol,
     /// SGX attestation failed.
-    AttestationError,
+    AttestationError(attest::enclave::Error),
     /// Invalid response received from the server.
     InvalidResponse,
     /// Retry later.
@@ -262,18 +251,33 @@ pub enum Error {
     ParseError,
 }
 
-impl From<AttestedConnectionError> for Error {
+/// CDSI-protocol-specific subset of [`LookupError`] cases.
+///
+/// Contains cases for errors that aren't covered by other error types.
+#[derive(Debug, displaydoc::Display)]
+pub enum CdsiError {
+    /// Protocol error after establishing a connection.
+    Protocol,
+    /// Invalid response received from the server.
+    InvalidResponse,
+    /// Retry later.
+    RateLimited { retry_after: Duration },
+    /// Failed to parse the response from the server.
+    ParseError,
+}
+
+impl From<AttestedConnectionError> for LookupError {
     fn from(value: AttestedConnectionError) -> Self {
         match value {
             AttestedConnectionError::ClientConnection(_) => Self::Protocol,
             AttestedConnectionError::Net(net) => Self::Net(net),
             AttestedConnectionError::Protocol => Self::Protocol,
-            AttestedConnectionError::Sgx(_) => Self::AttestationError,
+            AttestedConnectionError::Sgx(e) => Self::AttestationError(e),
         }
     }
 }
 
-impl From<prost::DecodeError> for Error {
+impl From<prost::DecodeError> for LookupError {
     fn from(_value: prost::DecodeError) -> Self {
         Self::Protocol
     }
@@ -293,7 +297,7 @@ pub struct ClientResponseCollector<S = SslStream<TcpStream>>(CdsiConnection<S>);
 
 impl<S: AsyncDuplexStream> CdsiConnection<S> {
     /// Connect to remote host and verify remote attestation.
-    pub async fn connect<P, T>(env: &P, auth: impl HttpBasicAuth) -> Result<Self, Error>
+    pub async fn connect<P, T>(env: &P, auth: impl HttpBasicAuth) -> Result<Self, LookupError>
     where
         P: CdsiConnectionParams<TransportConnector = T>,
         T: TransportConnector<Stream = S>,
@@ -305,9 +309,9 @@ impl<S: AsyncDuplexStream> CdsiConnection<S> {
         let connection_attempt_result = service_initializer.connect().await;
         let websocket = match connection_attempt_result {
             ServiceState::Active(websocket, _) => Ok(websocket),
-            ServiceState::Cooldown(_) => Err(Error::Net(NetError::NoServiceConnection)),
-            ServiceState::Error(e) => Err(Error::Net(e)),
-            ServiceState::TimedOut => Err(Error::Net(NetError::Timeout)),
+            ServiceState::Cooldown(_) => Err(LookupError::Net(NetError::NoServiceConnection)),
+            ServiceState::Error(e) => Err(LookupError::Net(e)),
+            ServiceState::TimedOut => Err(LookupError::Net(NetError::Timeout)),
         }?;
         let attested = AttestedConnection::connect(websocket, |attestation_msg| {
             attest::cds2::new_handshake(env.mr_enclave(), attestation_msg, SystemTime::now())
@@ -320,7 +324,7 @@ impl<S: AsyncDuplexStream> CdsiConnection<S> {
     pub async fn send_request(
         mut self,
         request: LookupRequest,
-    ) -> Result<(Token, ClientResponseCollector<S>), Error> {
+    ) -> Result<(Token, ClientResponseCollector<S>), LookupError> {
         self.0.send(request.into_client_request()).await?;
         let token_response: ClientResponse = match self.0.receive().await? {
             NextOrClose::Next(response) => response,
@@ -330,18 +334,18 @@ impl<S: AsyncDuplexStream> CdsiConnection<S> {
                         if let Ok(RateLimitExceededResponse { retry_after }) =
                             serde_json::from_str(&close.reason)
                         {
-                            return Err(Error::RateLimited {
+                            return Err(LookupError::RateLimited {
                                 retry_after: Duration::from_secs(retry_after.into()),
                             });
                         }
                     }
                 };
-                return Err(Error::Protocol);
+                return Err(LookupError::Protocol);
             }
         };
 
         if token_response.token.is_empty() {
-            return Err(Error::Protocol);
+            return Err(LookupError::Protocol);
         }
 
         Ok((
@@ -352,7 +356,7 @@ impl<S: AsyncDuplexStream> CdsiConnection<S> {
 }
 
 impl<S: AsyncDuplexStream> ClientResponseCollector<S> {
-    pub async fn collect(self) -> Result<LookupResponse, Error> {
+    pub async fn collect(self) -> Result<LookupResponse, LookupError> {
         let Self(mut connection) = self;
 
         let token_ack = ClientRequest {
@@ -361,10 +365,15 @@ impl<S: AsyncDuplexStream> ClientResponseCollector<S> {
         };
 
         connection.0.send(token_ack).await?;
-        let mut response: ClientResponse =
-            connection.0.receive().await?.next_or(Error::Protocol)?;
+        let mut response: ClientResponse = connection
+            .0
+            .receive()
+            .await?
+            .next_or(LookupError::Protocol)?;
         while let NextOrClose::Next(decoded) = connection.0.receive_bytes().await? {
-            response.merge(decoded.as_ref()).map_err(Error::from)?;
+            response
+                .merge(decoded.as_ref())
+                .map_err(LookupError::from)?;
         }
         Ok(response.try_into()?)
     }
@@ -435,7 +444,7 @@ mod test {
         let parsed = ClientResponse {
             e164_pni_aci_triples,
             token: vec![],
-            debug_permits_used: 0,
+            debug_permits_used: 42,
         }
         .try_into();
         assert_eq!(
@@ -448,7 +457,8 @@ mod test {
                         pni: Some(Pni::from(Uuid::from_bytes(PNI_BYTES))),
                     };
                     NUM_REPEATS
-                ]
+                ],
+                debug_permits_used: 42
             })
         );
     }

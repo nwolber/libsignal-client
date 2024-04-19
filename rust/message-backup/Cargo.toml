@@ -9,6 +9,18 @@ edition = "2021"
 authors = ["Signal Messenger LLC"]
 license = "AGPL-3.0-only"
 
+[features]
+# Enables code to allow conversion of backups to and from JSON.
+json = ["dep:serde_json", "dep:protobuf-json-mapping"]
+
+[[example]]
+name = "json_to_binproto"
+required-features = ["json"]
+
+[[example]]
+name = "binproto_to_json"
+required-features = ["json"]
+
 [dependencies]
 libsignal-message-backup-macros = { path = "macros" }
 libsignal-protocol = { path = "../protocol" }
@@ -29,13 +41,17 @@ hex = "0.4.3"
 hkdf = "0.12"
 hmac = "0.12"
 log = "0.4"
+mediasan-common = "0.5.0"
 protobuf = "3.3.0"
+protobuf-json-mapping = { version = "3.3.0", optional = true }
+serde_json = { version = "1.0", optional = true }
 sha2 = "0.10"
 subtle = "2.5.0"
 thiserror = "1.0.50"
 uuid = "1.1.2"
 
 [dev-dependencies]
+libsignal-message-backup = { path = "./", features = ["json"] }
 signal-crypto = { path = "../crypto" }
 
 array-concat = "0.5.2"
@@ -46,6 +62,7 @@ futures = { version = "0.3.29", features = ["executor"] }
 hex-literal = "0.4.1"
 test-case = "3.3.1"
 test-log = "0.2.14"
+testing_logger = "0.1.1"
 
 [build-dependencies]
 protobuf = "3.3.0"
