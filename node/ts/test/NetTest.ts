@@ -59,7 +59,6 @@ describe('chat service api', () => {
 
   it('converts DebugInfo object to native', () => {
     const expected = {
-      connectionReused: true,
       reconnectCount: 2,
       ipType: 1,
       durationMillis: 200,
@@ -220,7 +219,7 @@ describe('SVR3', () => {
     const otp = Native.CreateOTPFromBase64(
       USERNAME,
       // Empty string is a valid base64 encoding
-      process.env.ENCLAVE_SECRET || ''
+      process.env.LIBSIGNAL_TESTING_ENCLAVE_SECRET || ''
     );
     return { username: USERNAME, password: otp };
   }
@@ -265,7 +264,7 @@ describe('SVR3', () => {
   // not be run).
   describe('Integration tests', function (this: Mocha.Suite) {
     before(() => {
-      if (!process.env.ENCLAVE_SECRET) {
+      if (!process.env.LIBSIGNAL_TESTING_ENCLAVE_SECRET) {
         this.ctx.skip();
       }
     });
@@ -308,6 +307,6 @@ describe('SVR3', () => {
       return expect(SVR3.restore('password', shareSet, auth))
         .to.eventually.be.rejectedWith(LibSignalErrorBase)
         .and.have.property('code', ErrorCode.SvrDataMissing);
-    });
+    }).timeout(10000);
   });
 });

@@ -520,7 +520,7 @@ impl<'a> ResultTypeInfo<'a> for crate::cds2::Cds2Metrics {
         )?;
         let jmap = JMap::from_env(env, &jobj)?;
 
-        let long_class = env.find_class(jni_class_name!(java.lang.Long))?;
+        let long_class = find_class(env, jni_class_name!(java.lang.Long))?;
         for (k, v) in self.0 {
             let k = k.convert_into(env)?;
             let v = new_object(env, &long_class, jni_args!((v => long) -> void))?;
@@ -983,9 +983,7 @@ impl<'a> ResultTypeInfo<'a> for libsignal_net::cdsi::LookupResponse {
         let entry_class = {
             const ENTRY_CLASS: &str =
                 jni_class_name!(org.signal.libsignal.net.CdsiLookupResponse::Entry);
-            get_preloaded_class(env, ENTRY_CLASS)
-                .transpose()
-                .unwrap_or_else(|| env.find_class(ENTRY_CLASS))?
+            find_class(env, ENTRY_CLASS)?
         };
 
         for entry in records {
@@ -1019,9 +1017,7 @@ impl<'a> ResultTypeInfo<'a> for libsignal_net::cdsi::LookupResponse {
         let class = {
             const RESPONSE_CLASS: &str =
                 jni_class_name!(org.signal.libsignal.net.CdsiLookupResponse);
-            get_preloaded_class(env, RESPONSE_CLASS)
-                .transpose()
-                .unwrap_or_else(|| env.find_class(RESPONSE_CLASS))?
+            find_class(env, RESPONSE_CLASS)?
         };
         Ok(new_object(
             env,
@@ -1065,9 +1061,7 @@ impl<'a> ResultTypeInfo<'a> for libsignal_net::chat::Response {
         let class = {
             const RESPONSE_CLASS: &str =
                 jni_class_name!(org.signal.libsignal.net.ChatService::Response);
-            get_preloaded_class(env, RESPONSE_CLASS)
-                .transpose()
-                .unwrap_or_else(|| env.find_class(RESPONSE_CLASS))?
+            find_class(env, RESPONSE_CLASS)?
         };
 
         Ok(new_object(
@@ -1088,7 +1082,6 @@ impl<'a> ResultTypeInfo<'a> for libsignal_net::chat::DebugInfo {
 
     fn convert_into(self, env: &mut JNIEnv<'a>) -> Result<Self::ResultType, BridgeLayerError> {
         let Self {
-            connection_reused,
             reconnect_count,
             ip_type,
             duration,
@@ -1110,16 +1103,13 @@ impl<'a> ResultTypeInfo<'a> for libsignal_net::chat::DebugInfo {
         let class = {
             const RESPONSE_CLASS: &str =
                 jni_class_name!(org.signal.libsignal.net.ChatService::DebugInfo);
-            get_preloaded_class(env, RESPONSE_CLASS)
-                .transpose()
-                .unwrap_or_else(|| env.find_class(RESPONSE_CLASS))?
+            find_class(env, RESPONSE_CLASS)?
         };
 
         Ok(new_object(
             env,
             class,
             jni_args!((
-                connection_reused => boolean,
                 reconnect_count_i32 => int,
                 ip_type_byte => byte,
                 duration_ms => int,
@@ -1144,9 +1134,7 @@ impl<'a> ResultTypeInfo<'a> for ResponseAndDebugInfo {
         let class = {
             const RESPONSE_CLASS: &str =
                 jni_class_name!(org.signal.libsignal.net.ChatService::ResponseAndDebugInfo);
-            get_preloaded_class(env, RESPONSE_CLASS)
-                .transpose()
-                .unwrap_or_else(|| env.find_class(RESPONSE_CLASS))?
+            find_class(env, RESPONSE_CLASS)?
         };
 
         Ok(new_object(

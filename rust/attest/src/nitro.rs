@@ -68,7 +68,7 @@ pub fn new_handshake(
     Ok(handshake)
 }
 
-#[derive(Debug, displaydoc::Display, PartialEq, Eq)]
+#[derive(Debug, displaydoc::Display, thiserror::Error, PartialEq, Eq)]
 pub enum NitroError {
     /// Invalid CBOR
     InvalidCbor,
@@ -89,8 +89,6 @@ pub enum NitroError {
     /// Invalid User Data
     InvalidUserData,
 }
-
-impl std::error::Error for NitroError {}
 
 impl From<ciborium::de::Error<std::io::Error>> for NitroError {
     fn from(_err: ciborium::de::Error<std::io::Error>) -> NitroError {
@@ -385,7 +383,7 @@ impl AttestationDoc {
         };
         let is_valid = context.init(&trust, &certificate, &stack, |ctx| ctx.verify_cert())?;
         if !is_valid {
-            let message = context.error().to_string();
+            let message = context.verify_result().unwrap_err().to_string();
             return Err(NitroError::InvalidCertificate(message));
         }
         Ok(certificate)

@@ -14,9 +14,9 @@ pub const ENCLAVE_ID_CDSI_STAGING: &[u8] =
 pub const ENCLAVE_ID_SVR2_STAGING: &[u8] =
     &hex!("acb1973aa0bbbd14b3b4e06f145497d948fd4a98efc500fcce363b3b743ec482");
 pub const ENCLAVE_ID_SVR3_SGX_STAGING: &[u8] =
-    &hex!("b7811fb574a4d7e59408e30a2e0ddd9ae3f241594156e7ad647785c1c52e4f3c");
-pub const ENCLAVE_ID_SVR3_NITRO_STAGING: &[u8] = b"3b3dda58.52b91975.02dfde15";
-pub const ENCLAVE_ID_SVR3_TPM2SNP_STAGING: &[u8] = b"0.20240319.160523";
+    &hex!("6ac35d9eef8d11f4e6276656f4081925770922e01b7c4d80a51de87d001ac259");
+pub const ENCLAVE_ID_SVR3_NITRO_STAGING: &[u8] = b"24e56baa.52b91975.ec540f3f";
+pub const ENCLAVE_ID_SVR3_TPM2SNP_STAGING: &[u8] = b"0.20240411.210730";
 
 pub const ENCLAVE_ID_SVR3_SGX_PROD: &[u8] =
     &hex!("0000000000000000000000000000000000000000000000000000000000000000");
@@ -31,9 +31,9 @@ pub(crate) const NITRO_EXPECTED_PCRS: SmallMap<&'static [u8], nitro::PcrMap, 1> 
     (
         ENCLAVE_ID_SVR3_NITRO_STAGING,
         SmallMap::new([
-             (0, hex!("3b3dda58fb82066920ecb191a41a21680651cb94c7b25e806f0999c6c30c53797779df4677fcd19bdb726c0ba1a77bca")),
+             (0, hex!("24e56baabe26dcedc58f5753ee979e2f74750df31f43a18f0cf4e08f8ad8c0cd304142cf3441945c3568f4096cb69c66")),
              (1, hex!("52b919754e1643f4027eeee8ec39cc4a2cb931723de0c93ce5cc8d407467dc4302e86490c01c0d755acfe10dbf657546")),
-             (2, hex!("02dfde151591cc1fcc08f9c9e29c588562c98436743b7f7cd895ad594391b42c405c52e6265ea03b28bf88ef7bf28661")),
+             (2, hex!("ec540f3f7f673ab65582d96cf26a747beffcc9392e82f48cfa4ceec47a6ad69a63f9102fc7e1fae37a83a9741814210f")),
         ]),
     ),
 ]);
@@ -47,10 +47,10 @@ pub(crate) const TPM2SNP_EXPECTED_PCRS: SmallMap<&'static [u8], &'static tpm2snp
             (2,  hex!("3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969")),
             (3,  hex!("3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969")),
             (4,  hex!("6038382cdf539eb64d05c804c510e22b81e2c71fb171c9616ab14504f3654bb1")),
-            (5,  hex!("076726dc15276afd9cc9d7574340e1de96934782939e5a8cbac1ca5158061404")),
-            (7,  hex!("ba313dc4774eb6ddcc01945c2b57dbfb1afc296de9ff8105f916b4f55afa848a")),
-            (8,  hex!("5315286db60934c840f5a894dd79e36a12b6cfa4ffe199f929d0b8f4be9e5aa9")),
-            (9,  hex!("0fde941f5c73bfc4b19d53a5db1abc886c4c1308d665194d373677a55f683c2e")),
+            (5,  hex!("4e871c2923a78a62db4afde169145ad46c633f871f7a5d14b68153d81d1de4d3")),
+            (7,  hex!("590471a4fbd0c881c4fdc6349bc697e4df18c660c3ae3de9cb29028f8ef77280")),
+            (8,  hex!("497c436dde91431c96e19e14036cce3a0a70e0dd007b6dcc01f07fbab228c56c")),
+            (9,  hex!("9afeee52dee64ac16107982f37f70ffde99126b56e6c1de17c3cb105e4ea6d97")),
             (11, hex!("0000000000000000000000000000000000000000000000000000000000000000")),
             (12, hex!("0000000000000000000000000000000000000000000000000000000000000000")),
             (13, hex!("0000000000000000000000000000000000000000000000000000000000000000")),
@@ -105,26 +105,26 @@ pub(crate) static EXPECTED_RAFT_CONFIG: SmallMap<&'static [u8], &'static RaftCon
             ENCLAVE_ID_SVR3_SGX_STAGING,
             &RaftConfig {
                 min_voting_replicas: 3,
-                max_voting_replicas: 5,
+                max_voting_replicas: 9,
                 super_majority: 0,
-                group_id: 1292240360480775808,
+                group_id: 7392562970588785022,
             },
         ),
         (
             ENCLAVE_ID_SVR3_NITRO_STAGING,
             &RaftConfig {
-                group_id: 12002677302519264339,
+                group_id: 15634566125189380832,
                 min_voting_replicas: 3,
-                max_voting_replicas: 5,
+                max_voting_replicas: 9,
                 super_majority: 0,
             },
         ),
         (
             ENCLAVE_ID_SVR3_TPM2SNP_STAGING,
             &RaftConfig {
-                group_id: 2616274069462536786,
+                group_id: 8812204445911365918,
                 min_voting_replicas: 3,
-                max_voting_replicas: 5,
+                max_voting_replicas: 9,
                 super_majority: 0,
             },
         ),

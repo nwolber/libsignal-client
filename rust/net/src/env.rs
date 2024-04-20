@@ -16,7 +16,9 @@ use rand::{thread_rng, Rng};
 use crate::enclave::{Cdsi, EnclaveEndpoint, MrEnclave, Nitro, Sgx, Tpm2Snp};
 use crate::infra::certs::RootCertificates;
 use crate::infra::dns::LookupResult;
-use crate::infra::{ConnectionParams, DnsSource, HttpRequestDecorator, HttpRequestDecoratorSeq};
+use crate::infra::{
+    ConnectionParams, DnsSource, HttpRequestDecorator, HttpRequestDecoratorSeq, RouteType,
+};
 
 pub(crate) const WS_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
 pub(crate) const WS_MAX_IDLE_TIME: Duration = Duration::from_secs(15);
@@ -121,18 +123,16 @@ pub const DOMAIN_CONFIG_SVR3_TPM2SNP: DomainConfig = DomainConfig {
     proxy_path: "/svr3-tpm2snp",
 };
 
-const TPM2SNP_TEST_SERVER_CERT: RootCertificates =
-    RootCertificates::FromDer(include_bytes!("../res/tpm2snp_test_server_cert.cer"));
 pub const DOMAIN_CONFIG_SVR3_TPM2SNP_STAGING: DomainConfig = DomainConfig {
     hostname: "backend3.svr3.staging.signal.org",
     ip_v4: &[ip_addr!(v4, "13.88.30.76")],
     ip_v6: &[],
-    cert: &TPM2SNP_TEST_SERVER_CERT,
+    cert: &RootCertificates::Signal,
     proxy_path: "/svr3-tpm2snp-staging",
 };
 
 const PROXY_CONFIG_F: ProxyConfig = ProxyConfig {
-    route_log_name: "proxy_f",
+    route_type: RouteType::ProxyF,
     hostname: "reflector-signal.global.ssl.fastly.net",
     sni_list: &[
         "github.githubassets.com",
@@ -142,7 +142,7 @@ const PROXY_CONFIG_F: ProxyConfig = ProxyConfig {
 };
 
 const PROXY_CONFIG_G: ProxyConfig = ProxyConfig {
-    route_log_name: "proxy_g",
+    route_type: RouteType::ProxyG,
     hostname: "reflector-nrgwuv7kwq-uc.a.run.app",
     sni_list: &[
         "www.google.com",
@@ -172,7 +172,7 @@ impl DomainConfig {
 
     pub fn connection_params(&self) -> ConnectionParams {
         ConnectionParams::new(
-            "direct",
+            RouteType::Direct,
             self.hostname,
             self.hostname,
             nonzero!(443u16),
@@ -193,7 +193,7 @@ impl DomainConfig {
 }
 
 pub struct ProxyConfig {
-    route_log_name: &'static str,
+    route_type: RouteType,
     hostname: &'static str,
     sni_list: &'static [&'static str],
 }
@@ -208,7 +208,7 @@ impl ProxyConfig {
         sni_list.shuffle(&mut rng);
         sni_list.into_iter().map(move |sni| {
             ConnectionParams::new(
-                self.route_log_name,
+                self.route_type,
                 sni,
                 self.hostname,
                 nonzero!(443u16),

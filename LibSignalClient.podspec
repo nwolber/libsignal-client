@@ -5,7 +5,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'LibSignalClient'
-  s.version          = '0.44.0'
+  s.version          = '0.45.0'
   s.summary          = 'A Swift wrapper library for communicating with the Signal messaging service.'
 
   s.homepage         = 'https://github.com/signalapp/libsignal'
@@ -101,6 +101,12 @@ Pod::Spec.new do |s|
     test_spec.pod_target_xcconfig = {
       # Don't also link into the test target.
       'LIBSIGNAL_FFI_LIB_TO_LINK' => '',
+    }
+
+    # Ideally we'd do this at run time, not configuration time, but CocoaPods doesn't make that easy.
+    # This is good enough.
+    test_spec.scheme = {
+      environment_variables: ENV.select { |name, value| name.start_with?('LIBSIGNAL_TESTING_') }
     }
   end
 end

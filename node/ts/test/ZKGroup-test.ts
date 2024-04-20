@@ -57,6 +57,7 @@ import {
   ReceiptCredentialRequest,
   ReceiptCredentialRequestContext,
   ReceiptCredentialResponse,
+  BackupLevel,
 } from '../zkgroup/';
 import { Aci, Pni } from '../Address';
 import { LibSignalErrorBase, Uuid } from '..';
@@ -163,6 +164,23 @@ describe('ZKGroup', () => {
     assertDeserializeInvalidThrows(UuidCiphertext);
   });
 
+  it('serializeRoundTrip', () => {
+    const serverSecretParams =
+      ServerSecretParams.generateWithRandom(TEST_ARRAY_32);
+    const serializedSecretParams = serverSecretParams.serialize();
+    assertArrayEquals(
+      serializedSecretParams,
+      new ServerSecretParams(serializedSecretParams).serialize()
+    );
+
+    const serverPublicParams = serverSecretParams.getPublicParams();
+    const serializedPublicParams = serverPublicParams.serialize();
+    assertArrayEquals(
+      serializedPublicParams,
+      new ServerPublicParams(serializedPublicParams).serialize()
+    );
+  });
+
   it('testAuthWithPniIntegration', () => {
     const aci = Aci.fromUuid(TEST_UUID);
     const pni = Pni.fromUuid(TEST_UUID_1);
@@ -209,14 +227,6 @@ describe('ZKGroup', () => {
         redemptionTime,
         authCredentialResponse
       );
-    assert.throws(() =>
-      clientZkAuthCipher.receiveAuthCredentialWithPniAsAci(
-        aci,
-        pni,
-        redemptionTime,
-        authCredentialResponse
-      )
-    );
 
     // Create and decrypt user entry
     const aciCiphertext = clientZkGroupCipher.encryptServiceId(aci);
@@ -225,100 +235,6 @@ describe('ZKGroup', () => {
     const pniCiphertext = clientZkGroupCipher.encryptServiceId(pni);
     const pniPlaintext = clientZkGroupCipher.decryptServiceId(pniCiphertext);
     assert(pni.isEqual(pniPlaintext));
-
-    // Create presentation
-    const presentation =
-      clientZkAuthCipher.createAuthCredentialWithPniPresentationWithRandom(
-        TEST_ARRAY_32_5,
-        groupSecretParams,
-        authCredential
-      );
-
-    // Verify presentation
-    assertArrayEquals(
-      aciCiphertext.serialize(),
-      presentation.getUuidCiphertext().serialize()
-    );
-    const presentationPniCiphertext = presentation.getPniCiphertext();
-    // Use a generic assertion instead of assert.isNotNull because TypeScript understands it.
-    assert(presentationPniCiphertext !== null);
-    assertArrayEquals(
-      pniCiphertext.serialize(),
-      presentationPniCiphertext.serialize()
-    );
-    assert.deepEqual(
-      presentation.getRedemptionTime(),
-      new Date(1000 * redemptionTime)
-    );
-    serverZkAuth.verifyAuthCredentialPresentation(
-      groupPublicParams,
-      presentation,
-      new Date(1000 * redemptionTime)
-    );
-  });
-
-  it('testAuthWithPniAsAciIntegration', () => {
-    const aci = Aci.fromUuid(TEST_UUID);
-    const pni = Pni.fromUuid(TEST_UUID_1);
-    const redemptionTime = 123456 * SECONDS_PER_DAY;
-
-    // Generate keys (client's are per-group, server's are not)
-    // ---
-
-    // SERVER
-    const serverSecretParams =
-      ServerSecretParams.generateWithRandom(TEST_ARRAY_32);
-    const serverPublicParams = serverSecretParams.getPublicParams();
-    const serverZkAuth = new ServerZkAuthOperations(serverSecretParams);
-
-    // CLIENT
-    const masterKey = new GroupMasterKey(TEST_ARRAY_32_1);
-    const groupSecretParams = GroupSecretParams.deriveFromMasterKey(masterKey);
-
-    assertArrayEquals(
-      groupSecretParams.getMasterKey().serialize(),
-      masterKey.serialize()
-    );
-
-    const groupPublicParams = groupSecretParams.getPublicParams();
-
-    // SERVER
-    // Issue credential
-    const authCredentialResponse =
-      serverZkAuth.issueAuthCredentialWithPniAsAciWithRandom(
-        TEST_ARRAY_32_2,
-        aci,
-        pni,
-        redemptionTime
-      );
-
-    // CLIENT
-    // Receive credential
-    const clientZkAuthCipher = new ClientZkAuthOperations(serverPublicParams);
-    const clientZkGroupCipher = new ClientZkGroupCipher(groupSecretParams);
-    const authCredential = clientZkAuthCipher.receiveAuthCredentialWithPniAsAci(
-      aci,
-      pni,
-      redemptionTime,
-      authCredentialResponse
-    );
-    assert.throws(() =>
-      clientZkAuthCipher.receiveAuthCredentialWithPniAsServiceId(
-        aci,
-        pni,
-        redemptionTime,
-        authCredentialResponse
-      )
-    );
-
-    // Create and decrypt user entry
-    const aciCiphertext = clientZkGroupCipher.encryptServiceId(aci);
-    const aciPlaintext = clientZkGroupCipher.decryptServiceId(aciCiphertext);
-    assert(aci.isEqual(aciPlaintext));
-    const pniAsAci = Aci.fromUuidBytes(pni.getRawUuidBytes());
-    const pniCiphertext = clientZkGroupCipher.encryptServiceId(pniAsAci);
-    const pniPlaintext = clientZkGroupCipher.decryptServiceId(pniCiphertext);
-    assert(pniAsAci.isEqual(pniPlaintext));
 
     // Create presentation
     const presentation =
@@ -808,7 +724,7 @@ describe('ZKGroup', () => {
     );
 
     it('testDeterministic', () => {
-      const receiptLevel = 1n;
+      const backupLevel = BackupLevel.Messages;
       const context = BackupAuthCredentialRequestContext.create(
         BACKUP_KEY,
         TEST_USER_ID
@@ -823,19 +739,20 @@ describe('ZKGroup', () => {
       const startOfDay = now - (now % SECONDS_PER_DAY);
       const response = request.issueCredential(
         startOfDay,
-        receiptLevel,
+        backupLevel,
         serverSecretParams
       );
       const credential = context.receive(
         response,
-        serverSecretParams.getPublicParams(),
-        receiptLevel
+        startOfDay,
+        serverSecretParams.getPublicParams()
       );
+      assert.equal(backupLevel, credential.getBackupLevel());
       assertArrayEquals(SERIALIZED_BACKUP_ID, credential.getBackupId());
     });
 
     it('testIntegration', () => {
-      const receiptLevel = 10n;
+      const backupLevel = BackupLevel.Messages;
 
       const serverSecretParams =
         GenericServerSecretParams.generateWithRandom(SERVER_SECRET_RANDOM);
@@ -853,7 +770,7 @@ describe('ZKGroup', () => {
       const startOfDay = now - (now % SECONDS_PER_DAY);
       const response = request.issueCredentialWithRandom(
         startOfDay,
-        receiptLevel,
+        backupLevel,
         serverSecretParams,
         TEST_ARRAY_32_1
       );
@@ -861,12 +778,10 @@ describe('ZKGroup', () => {
       // client
       const credential = context.receive(
         response,
-        serverPublicParams,
-        receiptLevel
+        startOfDay,
+        serverPublicParams
       );
-      assert.throws(() =>
-        context.receive(response, serverPublicParams, receiptLevel + 1n)
-      );
+      assert.equal(backupLevel, credential.getBackupLevel());
       const presentation = credential.presentWithRandom(
         serverPublicParams,
         TEST_ARRAY_32_2

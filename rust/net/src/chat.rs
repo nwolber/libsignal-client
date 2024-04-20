@@ -69,8 +69,6 @@ pub trait RemoteAddressInfo {
 
 #[derive(Debug)]
 pub struct DebugInfo {
-    /// Indicates if the connection was active at the time of the call.
-    pub connection_reused: bool,
     /// Number of times a connection had to be established since the service was created.
     pub reconnect_count: u32,
     /// IP type of the connection that was used for the request.
@@ -513,7 +511,7 @@ pub(crate) mod test {
         use crate::infra::errors::LogSafeDisplay;
         use crate::infra::reconnect::{ServiceConnector, ServiceState};
         use crate::infra::test::shared::{NoReconnectService, TIMEOUT_DURATION};
-        use crate::infra::ConnectionParams;
+        use crate::infra::{ConnectionParams, RouteType};
 
         #[async_trait]
         impl<C> ChatService for NoReconnectService<C>
@@ -559,7 +557,7 @@ pub(crate) mod test {
 
         pub fn connection_manager() -> SingleRouteThrottlingConnectionManager {
             let connection_params = ConnectionParams::new(
-                "test",
+                RouteType::Test,
                 "test.signal.org",
                 "test.signal.org",
                 nonzero!(443u16),

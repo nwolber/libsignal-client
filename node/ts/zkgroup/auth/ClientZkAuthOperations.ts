@@ -35,32 +35,7 @@ export default class ClientZkAuthOperations {
   ): AuthCredentialWithPni {
     return new AuthCredentialWithPni(
       Native.ServerPublicParams_ReceiveAuthCredentialWithPniAsServiceId(
-        this.serverPublicParams.getContents(),
-        aci.getServiceIdFixedWidthBinary(),
-        pni.getServiceIdFixedWidthBinary(),
-        redemptionTime,
-        authCredentialResponse.getContents()
-      )
-    );
-  }
-
-  /**
-   * Produces the AuthCredentialWithPni from a server-generated AuthCredentialWithPniResponse.
-   *
-   * This older style of AuthCredentialWithPni will not actually have a usable PNI field,
-   * but can still be used for authenticating with an ACI.
-   *
-   * @param redemptionTime - This is provided by the server as an integer, and should be passed through directly.
-   */
-  receiveAuthCredentialWithPniAsAci(
-    aci: Aci,
-    pni: Pni,
-    redemptionTime: number,
-    authCredentialResponse: AuthCredentialWithPniResponse
-  ): AuthCredentialWithPni {
-    return new AuthCredentialWithPni(
-      Native.ServerPublicParams_ReceiveAuthCredentialWithPniAsAci(
-        this.serverPublicParams.getContents(),
+        this.serverPublicParams,
         aci.getServiceIdFixedWidthBinary(),
         pni.getServiceIdFixedWidthBinary(),
         redemptionTime,
@@ -89,7 +64,7 @@ export default class ClientZkAuthOperations {
   ): AuthCredentialPresentation {
     return new AuthCredentialPresentation(
       Native.ServerPublicParams_CreateAuthCredentialWithPniPresentationDeterministic(
-        this.serverPublicParams.getContents(),
+        this.serverPublicParams,
         random,
         groupSecretParams.getContents(),
         authCredential.getContents()
