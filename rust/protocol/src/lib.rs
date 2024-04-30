@@ -23,7 +23,7 @@
 // #![warn(missing_docs)]
 
 mod consts;
-mod crypto;
+pub mod crypto;
 mod curve;
 pub mod error;
 mod fingerprint;
@@ -42,10 +42,10 @@ mod state;
 mod storage;
 mod utils;
 
-use error::Result;
+pub use error::Result;
 
 pub use libsignal_core::{
-    Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind,
+    Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind, WrongKindOfServiceIdError,
 };
 
 pub use curve::{KeyPair, PrivateKey, PublicKey};

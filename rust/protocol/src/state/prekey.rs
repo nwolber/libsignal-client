@@ -12,6 +12,11 @@ use std::fmt;
 
 /// A unique identifier selecting among this client's known pre-keys.
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
+)]
 pub struct PreKeyId(u32);
 
 impl From<u32> for PreKeyId {

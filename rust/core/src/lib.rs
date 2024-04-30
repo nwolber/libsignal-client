@@ -5,5 +5,5 @@
 
 mod address;
 pub use address::{
-    Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind,
+    Aci, DeviceId, Pni, ProtocolAddress, ServiceId, ServiceIdFixedWidthBinaryBytes, ServiceIdKind, WrongKindOfServiceIdError,
 };

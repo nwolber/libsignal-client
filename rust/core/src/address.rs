@@ -7,12 +7,23 @@
 
 //! Types for identifying an individual Signal client instance.
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use std::fmt;
 
 /// Known types of [ServiceId].
-#[derive(Clone, Copy, Hash, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive)]
+#[derive(
+    Clone,
+    Copy,
+    Hash,
+    PartialEq,
+    Eq,
+    num_enum::IntoPrimitive,
+    num_enum::TryFromPrimitive,
+    Serialize,
+    Deserialize,
+)]
 #[repr(u8)]
 pub enum ServiceIdKind {
     /// An [Aci].
@@ -45,7 +56,7 @@ pub struct WrongKindOfServiceIdError {
 /// A service ID with a known type.
 ///
 /// `RAW_KIND` is a raw [ServiceIdKind] (eventually Rust will allow enums as generic parameters).
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpecificServiceId<const RAW_KIND: u8>(Uuid);
 
 impl<const KIND: u8> SpecificServiceId<KIND> {
@@ -266,6 +277,27 @@ impl ServiceId {
             ServiceId::Aci(aci) => aci.into(),
             ServiceId::Pni(pni) => pni.into(),
         }
+    }
+}
+
+impl Serialize for ServiceId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.service_id_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ServiceId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).and_then(|s| {
+            ServiceId::parse_from_service_id_string(&s)
+                .ok_or_else(|| serde::de::Error::custom("deserialize invalid ServiceId"))
+        })
     }
 }
 
@@ -610,6 +642,8 @@ mod service_id_tests {
 ///
 /// Used in [ProtocolAddress].
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct DeviceId(u32);
 
 impl From<u32> for DeviceId {
